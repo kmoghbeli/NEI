@@ -1,0 +1,427 @@
+---
+title: "NeuroImmune Data"
+author: "Kaveh Moghbeli"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+```
+
+```{r libraries, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(ggpubr)
+library(ggprism)
+library(Seurat)
+conflicted::conflict_prefer_all("dplyr")
+
+kaveh_colors1 <- c("#a6611a", "#dfc27d", "#f5f5f5", "#80cdc1", "#018571")
+kaveh_colors2 <- c("#40004b", "#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#f7f7f7", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837", "#00441b")
+kaveh_colors3 <- c("#ff0000", "#f5f5f5","#0000ff")
+
+
+config_dir <- "./config/"
+data_dir <- "./data/"
+model_dir <- "./models/"
+results_dir <- "./results/"
+figures_dir <- "./figures/"
+
+# Parallell Processing
+if(parallel::detectCores(logical=FALSE) > 3) {
+  library(doParallel)
+
+  num_cores <- parallel::detectCores(logical=FALSE)
+  cl <- makePSOCKcluster(num_cores - 2)
+  registerDoParallel(cl)
+}
+```
+
+
+
+
+
+
+
+```{r integrated_vs_separate_comparison}
+
+july_degs_1 <- presto::wilcoxauc(july_immune_subset_from_all, 'condition', seurat_assay = 'RNA') %>% rowid_to_column("idx1")
+july_degs_2 <- presto::wilcoxauc(july_immune_subset_from_july, 'condition', seurat_assay = 'RNA') %>% rowid_to_column("idx2")
+
+compare_control <- july_degs_1 %>% filter("control" == group) %>% select(feature, idx1) %>% 
+  left_join(july_degs_2 %>% filter("control" == group) %>% select(feature, idx2), by = join_by(feature == feature))
+
+compare_control
+
+compare_re <- july_degs_1 %>% filter("re" == group) %>% select(feature, idx1) %>% 
+  left_join(july_degs_2 %>% filter("re" == group) %>% select(feature, idx2), by = join_by(feature == feature))
+
+compare_re
+```
+
+A brief look at the positive differentially expressed genes between the two epithelial cell clusters (possibly indicating basal vs luminal populations).
+
+```{r cluster_expl_epithelial, echo=FALSE}
+
+ni.sc <- readr::read_rds(paste0(data_dir, "ni_sc.rds"))
+
+Idents(ni.sc) <- ni.sc$cell_L1
+ni.sc.epithelial <- subset(ni.sc, idents = c("epithelial"))
+
+epithelial_degs <- presto::wilcoxauc(ni.sc.epithelial, 'cell_L3', seurat_assay = 'RNA')
+
+num_degs <- 10
+
+degs <- epithelial_degs %>% 
+  filter(logFC > 0) %>% 
+  group_by(group) %>% 
+  arrange(padj) %>% 
+  slice_head(n = num_degs) %>% 
+  pull(feature)
+
+Idents(ni.sc.epithelial) <- ni.sc.epithelial$cell_L3
+VlnPlot(ni.sc.epithelial, assay = "RNA",
+        features = c(degs, "Krt8", "Cebpd"),
+        scCustomize::DiscretePalette_scCustomize(length(degs) + 2, palette = "varibow", shuffle = FALSE),
+        stack = TRUE, flip = TRUE) + NoLegend()
+
+ggsave(paste0(figures_dir, "violion_epi_degs.pdf"), height = 10, width = 7)
+
+# epithelial_degs %>% 
+#   filter(logFC > 0) %>% 
+#   group_by(group) %>% 
+#   arrange(padj) %>% 
+#   slice_head(n = 25)
+```
+
+# DEGs
+<!--
+# DEGs
+DEGs on key immune clusters that have frequency changes:
+  "mac0", "mac1", "mac2", "mac3", "mac4", "t", "b0", "nk0"
+ - scratch vs control
+ - KOS vs scratch
+ - RE vs scratch
+ - RE vs KOS
+-->
+
+```{r cluster_degs, eval=FALSE, fig.height=11, fig.width=14, warning=FALSE, include=FALSE}
+
+clusters <- c("mac0", "mac1", "mac2", "mac3", "mac4", "t", "b0", "nk0", "epithelial0", "epithelial1")
+conditions <- list(c("scratch", "control"), 
+                    c("kos", "scratch"),
+                    c("re", "scratch"),
+                    c("kos", "re")
+                    )
+
+Idents(ni.sc) <- ni.sc$cell_ident
+
+for (cluster in clusters) {
+  for (condition in conditions) { 
+    
+    c1 <- unlist(condition)[1]
+    c2 <- unlist(condition)[2]
+    
+    degs <- FindMarkers(ni.sc, ident.1 = c1, ident.2 = c2, 
+                        group.by = "condition", 
+                        subset.ident = cluster, 
+                        verbose = FALSE)
+    
+    p <- EnhancedVolcano::EnhancedVolcano(degs, 
+                                          lab = rownames(degs), 
+                                          x = "avg_log2FC", y = "p_val_adj", 
+                                          FCcutoff = 1.0, 
+                                          pCutoff = 1e-05,
+                                          title = paste0(cluster, " :", c1, " vs ", c2),
+                                          #subtitle = cluster, 
+                                          max.overlaps = 25,
+                                          legendLabels = c("NS", 
+                                                           expression(Log[2] ~ FC), "P-val", 
+                                                           expression(P - value ~ and ~ Log[2] ~ FC)),
+                                          legendPosition = "bottom",
+                                          legendLabSize = 10,
+                                          legendIconSize = 3,
+                                          legendDropLevels = TRUE,
+                                          colAlpha = 1, pointSize = 5, 
+                                          drawConnectors = TRUE, widthConnectors = 0.5,
+                                          labFace = "plain", boxedLabels = TRUE)
+    
+    print(p)
+    
+    print(degs %>% filter(avg_log2FC > 1) %>% arrange(desc(avg_log2FC)))
+  }
+}
+
+
+
+```
+
+<!-- 
+Total Cell Counts for each top-level cell and cluster are:
+
+```{r cluster_cell_counts, echo=FALSE}
+ni.sc@meta.data %>% 
+  group_by(cell_ident) %>% 
+  summarise(num_cells = n())
+```
+-->
+
+
+<!-- Other attempted integration methods -->
+
+```{r other_integration_methods, eval=FALSE, include=FALSE}
+
+#### Merged the Already SCT normalized individual seurat objects then Harmonize
+#### BAD RESULTS - would not use
+####****************************************************************************
+# integ_features <- SelectIntegrationFeatures(object.list = seurat_objs.norm, nfeatures = 3000) 
+# 
+# # Merge normalized samples
+# obj.sct_then_merge <- merge(x = seurat_objs.norm[[1]],
+#                             y = seurat_objs.norm[2:length(seurat_objs.norm)],
+#                             merge.data = TRUE)
+# DefaultAssay(obj.sct_then_merge) <- "SCT"
+# 
+# # Manually set variable features of merged Seurat object
+# VariableFeatures(obj.sct_then_merge) <- integ_features
+# 
+# # Calculate PCs using manually set variable features
+# obj.sct_then_merge <- RunPCA(obj.sct_then_merge, assay = "SCT", npcs = 50) %>% 
+#   FindNeighbors(dims = 1:50, reduction = "pca", verbose = FALSE) %>% 
+#   FindClusters(resolution = 0.8, verbose = FALSE) %>% 
+#   RunUMAP(dims = 1:50, reduction = "pca", reduction.name = "umap.unintegrated", verbose = FALSE)
+# 
+# harmonized_seurat.sct_then_merge <- harmony::RunHarmony(obj.sct_then_merge, 
+#                                                         group.by.vars = c("id", "date"), 
+#                                                         reduction = "pca", assay.use = "SCT", reduction.save = "harmony")
+# 
+# harmonized_seurat.sct_then_merge <- RunUMAP(harmonized_seurat.sct_then_merge, 
+#                                             reduction = "harmony", 
+#                                             reduction.name = "umap.harmony",
+#                                             assay = "RNA", 
+#                                             dims = 1:50)
+# 
+# harmonized_seurat.sct_then_merge <- FindNeighbors(harmonized_seurat.sct_then_merge, reduction = "harmony")
+# harmonized_seurat.sct_then_merge <- FindClusters(harmonized_seurat.sct_then_merge, resolution = c(0.8))
+# 
+# harmonized_seurat.sct_then_merge %>% readr::write_rds(paste0(data_dir, "harmonized_seurat.sct_then_merge.rds"))
+####****************************************************************************
+
+#### Merged THEN SCT normalize then Harmonize
+#### Also not good results
+####****************************************************************************
+# obj.merge_then_sct <- merge(x = seurat_objs[[1]],
+#                             y = seurat_objs[2:length(seurat_objs)],
+#                             merge.data = TRUE)
+# 
+# obj.merge_then_sct$id <- factor(obj.merge_then_sct$id)
+# obj.merge_then_sct$date <- factor(obj.merge_then_sct$date)
+# obj.merge_then_sct$condition <- factor(obj.merge_then_sct$condition, levels = c("control", "scratch", "re", "kos"))
+# obj.merge_then_sct$location <- factor(obj.merge_then_sct$location)
+# obj.merge_then_sct$celltype <- factor(sub("\\|", " or ", obj.merge_then_sct$celltype))
+# 
+# obj.merge_then_sct <- SCTransform(obj.merge_then_sct, 
+#                                   vst.flavor = "v2",
+#                                   vars.to.regress = "percent.mt",
+#                                   return.only.var.genes = FALSE, 
+#                                   verbose = FALSE) %>% 
+#   RunPCA(assay = "SCT", npcs = 50, verbose = FALSE) %>% 
+#   FindNeighbors(dims = 1:50, reduction = "pca", verbose = FALSE) %>% 
+#   FindClusters(resolution = 0.8, verbose = FALSE) %>% 
+#   RunUMAP(dims = 1:50, reduction = "pca", reduction.name = "umap.unintegrated", verbose = FALSE)
+# 
+# 
+# harmonized_seurat.merge_then_sct <- harmony::RunHarmony(obj.merge_then_sct, 
+#                                                         group.by.vars = c("id", "date"), 
+#                                                         reduction = "pca", assay.use = "SCT", reduction.save = "harmony")
+# 
+# harmonized_seurat.merge_then_sct <- RunUMAP(harmonized_seurat.merge_then_sct, 
+#                              reduction = "harmony", 
+#                              reduction.name = "umap.harmony",
+#                              assay = "RNA", 
+#                              dims = 1:50)
+# 
+# harmonized_seurat.merge_then_sct <- FindNeighbors(harmonized_seurat.merge_then_sct, reduction = "harmony")
+# harmonized_seurat.merge_then_sct <- FindClusters(harmonized_seurat.merge_then_sct, resolution = c(0.8))
+# 
+# harmonized_seurat.merge_then_sct %>% readr::write_rds(paste0(data_dir, "harmonized_seurat.merge_then_sct.rds"))
+####****************************************************************************
+
+#----------Integration using SCT and Seurat V5-------------
+# 
+# obj <- NormalizeData(merged_seurat) %>% 
+#   FindVariableFeatures() %>% 
+#   ScaleData() %>% 
+#   RunPCA() %>% 
+#   FindNeighbors(dims = 1:30, reduction = "pca") %>% 
+#   FindClusters(resolution = 0.5, cluster.name = "unintegrated_clusters") %>% 
+#   RunUMAP(dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+# 
+# DimPlot(obj, 
+#         reduction = "umap.unintegrated", 
+#         cols = scCustomize::DiscretePalette_scCustomize(4, palette = "varibow", shuffle = FALSE),
+#         group.by = c("celltype"))
+# 
+# DimPlot(obj, 
+#         reduction = "umap.unintegrated", 
+#         cols = scCustomize::DiscretePalette_scCustomize(4, palette = "varibow", shuffle = FALSE),
+#         group.by = c("date"))
+# 
+# obj <- IntegrateLayers(object = obj, 
+#                        method = HarmonyIntegration,
+#                        orig.reduction = "pca", 
+#                        new.reduction = "harmony")
+# 
+# obj <- FindNeighbors(obj, reduction = "harmony", dims = 1:30)
+# obj <- FindClusters(obj, resolution = 0.50, cluster.name = "harmony_clusters")
+# 
+# obj <- RunUMAP(obj, 
+#                reduction = "harmony", 
+#                dims = 1:30, 
+#                reduction.name = "umap.harmony")
+# 
+# DimPlot(obj, 
+#         reduction = "umap.harmony", 
+#         cols = scCustomize::DiscretePalette_scCustomize(24, palette = "varibow", shuffle = FALSE),
+#         group.by = "harmony_clusters")
+# 
+# FeaturePlot(obj, features = c("Epcam", "Ptprc", "Trpv1"), reduction = "umap.harmony")
+# FeaturePlot(obj, features = c("Trpv1"), reduction = "umap.harmony")
+# 
+# # Need to do this before can do any DE analysis
+# obj <- JoinLayers(obj)
+# 
+# #------
+# merged_seurat <- merge(x = seurat_objs[[1]],
+#                        y = seurat_objs[2:length(seurat_objs)],
+#                        merge.data = TRUE)
+# 
+# obj.sct <- SCTransform(merged_seurat, vst.flavor = "v2")
+# obj.sct <- RunPCA(obj.sct)
+# 
+# obj.sct <- FindNeighbors(obj.sct, dims = 1:30, reduction = "pca")
+# obj.sct <- FindClusters(obj.sct, resolution = 2, cluster.name = "unintegrated_clusters")
+# 
+# obj.sct <- RunUMAP(obj.sct, dims = 1:30, reduction = "pca", reduction.name = "umap.unintegrated")
+# DimPlot(obj.sct, reduction = "umap.unintegrated", group.by = c("celltype", "id"))
+# 
+# obj.sct <- IntegrateLayers(object = obj.sct, 
+#                            method = HarmonyIntegration,
+#                            orig.reduction = "pca", 
+#                            new.reduction = "harmony")
+# 
+# obj.sct <- FindNeighbors(obj.sct, reduction = "harmony", dims = 1:30)
+# obj.sct <- FindClusters(obj.sct, resolution = 2, cluster.name = "harmony_clusters")
+# 
+# obj.sct <- RunUMAP(obj.sct, 
+#                    reduction = "harmony", 
+#                    dims = 1:30, 
+#                    reduction.name = "umap.harmony")
+# 
+# DimPlot(obj.sct, reduction = "umap.harmony", 
+#         cols = DiscretePalette(4, palette = "glasbey", shuffle = FALSE),
+#         group.by = c("celltype"))
+# # 
+# # FeaturePlot(obj.sct, features = c("Epcam", "Ptprc", "Trpv1"), reduction = "umap.harmony")
+# 
+# #----------Integration #1: Merge -> SCT -> Harmony-----------
+# 
+# # Reference here for Seurat-Merge-to-Harmony workflow implemented: (Option 1 - Merge before Harmony)
+# # https://hbctraining.github.io/scRNA-seq_online/lessons/06a_integration_harmony.html
+# 
+# # Merge raw samples
+# merged_seurat <- merge(x = seurat_objs[[1]],
+#                        y = seurat_objs[2:length(seurat_objs)],
+#                        merge.data = TRUE)
+# 
+# # Perform log-normalization and feature selection, as well as SCT normalization on global object
+# merged_seurat <- merged_seurat %>%
+#     NormalizeData() %>%
+#     FindVariableFeatures(selection.method = "vst", nfeatures = 2000) %>% 
+#     ScaleData() %>%
+#     SCTransform(vst.flavor = "v2") #vars.to.regress = "percent.mt")
+# 
+# # Calculate PCs using variable features determined by SCTransform
+# merged_seurat <- RunPCA(merged_seurat, assay = "SCT", npcs = 50)
+# 
+# harmonized_seurat <- harmony::RunHarmony(merged_seurat, 
+#                                          group.by.vars = c("id"), 
+#                                          reduction = "pca", 
+#                                          assay.use = "SCT", 
+#                                          reduction.save = "harmony")
+# 
+# harmonized_seurat <- RunUMAP(harmonized_seurat, reduction = "harmony", assay = "SCT", dims = 1:50)
+# 
+# harmonized_seurat <- FindNeighbors(object = harmonized_seurat, reduction = "harmony")
+# harmonized_seurat <- FindClusters(harmonized_seurat, resolution = c(0.2, 0.4, 0.6, 0.8, 1.0, 1.2))
+# 
+# # Run this to compare to Harmony
+# harmonized_seurat <- RunUMAP(harmonized_seurat, 
+#                              dims = 1:30, 
+#                              reduction = "pca", 
+#                              reduction.name = "umap.unintegrated")
+# 
+# # visualize by batch and cell type annotation
+# # cell type annotations were previously added by Azimuth
+# #DimPlot(obj, reduction = "umap.unintegrated", group.by = c("Method", "predicted.celltype.l2"))
+# DimPlot(harmonized_seurat, reduction = "umap.unintegrated", group.by = c("celltype", "condition"))
+# 
+# DimPlot(harmonized_seurat, reduction = "harmony", group.by = c("id"))
+# DimPlot(harmonized_seurat, reduction = "harmony", group.by = c("seurat_clusters", "celltype", "condition"))
+# 
+# 
+# #----------Integration #2: SCT -> Seurat Integrate (CCA) -----------
+# #----------(does not seem to work well and takes up a lot of memory)
+# 
+# seurat_obj.norm.list <- list()
+# 
+# for (seurat_object in seurat_objs) {
+#   
+#   seurat_object <- SCTransform(seurat_object, 
+#                                vst.flavor = "v2", 
+#                                #vars.to.regress = "percent.mt", 
+#                                return.only.var.genes = FALSE)
+#   
+#   seurat_obj.norm.list <- append(seurat_obj.norm.list, seurat_object)
+# }
+# 
+# sct.features <- SelectIntegrationFeatures(object.list = seurat_obj.norm.list, nfeatures = 5000)
+# seurat_obj.norm.list <- PrepSCTIntegration(object.list = seurat_obj.norm.list, 
+#                                       anchor.features = sct.features)
+# 
+# sct.anchors <- FindIntegrationAnchors(object.list = seurat_obj.norm.list, 
+#                                       normalization.method = "SCT", 
+#                                       anchor.features = sct.features)
+# 
+# sct.anchors %>% readr::write_rds(paste0(data_dir, "sct_anchors.rds"))
+# 
+# sct.integrated <- IntegrateData(anchorset = sct.anchors, normalization.method = "SCT")
+# 
+# ## Dimensional reduction, clustering, and UMAP should be done on the integrated assay
+# DefaultAssay(sct.integrated) <- "integrated"
+# 
+# # Dimensional reduction via PCA
+# #sct.integrated <- ScaleData(sct.integrated, verbose = FALSE) # not needed: see scTransform v2 vignette with integration
+# sct.integrated <- RunPCA(sct.integrated)
+# 
+# # Umap
+# sct.integrated <- RunUMAP(sct.integrated, dims = 1:30, assay = "integrated")
+# 
+# # Clustering
+# sct.integrated <- FindNeighbors(sct.integrated, reduction = "pca", dims = 1:30)
+# sct.integrated <- FindClusters(sct.integrated, resolution = 0.5)
+# 
+# DimPlot(sct.integrated, reduction = "umap", group.by = c("seurat_clusters", "celltype", "condition"))
+# 
+# #------------------------------------------------------------
+# 
+# # DimPlot(harmonized_seurat,
+# #         reduction = "harmony",
+# #         group.by = c("id", "harmony_clusters"),
+# #         combine = FALSE)
+# 
+# FeaturePlot(harmonized_seurat, features = c("Epcam", "Ptprc"), reduction = "umap.unintegrated")
+# FeaturePlot(harmonized_seurat, features = c("Ptprc"), reduction = "umap.unintegrated")
+```

@@ -1,0 +1,49 @@
+project: 'NeuroImmune'
+
+filename: 'sept_cornea'                                                                            
+
+percent_mito: 10
+# Options: "log", "sct"
+normalization: "sct"
+
+remove_features: ["Lars2", "Gm42418"]
+
+harmony_vars: ["condition"]
+
+samples:                                       
+  - sample:
+    id: '1_Control-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A29'
+    date: '20230921'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/1_Control-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A29/outs'
+    condition: 'control'
+    location: 'cornea'
+    timepoint: 'Day 3'
+    celltype: 'CD45+ or EpCAM+'
+
+  - sample:
+    id: '2_Scratch-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A30'
+    date: '20230921'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/2_Scratch-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A30/outs'
+    condition: 'scratch'
+    location: 'cornea'
+    timepoint: 'Day 3'
+    celltype: 'CD45+ or EpCAM+'
+
+  - sample:
+    id: '3_KOS-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A31'
+    date: '20230921'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/3_KOS-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A31/outs'
+    condition: 'kos'
+    location: 'cornea'
+    timepoint: 'Day 3'
+    celltype: 'CD45+ or EpCAM+'
+
+  - sample:
+    id: '4_RE-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A32'
+    date: '20230921'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/4_RE-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A32/outs'
+    condition: 're'
+    location: 'cornea'
+    timepoint: 'Day 3'
+    celltype: 'CD45+ or EpCAM+'
+    

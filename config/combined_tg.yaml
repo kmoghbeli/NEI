@@ -1,0 +1,86 @@
+project: 'NeuroImmune'
+
+filename: 'combined_tg'                                                                            
+
+percent_mito: 10
+# Options: "log", "sct"
+normalization: "sct"
+
+remove_features: ["Lars2", "Gm42418"]
+
+harmony_vars: ["date", "condition"]
+
+samples:                                       
+## August
+  - sample:
+    id: '1_Control-TG_082423_StLeger_3Pv3_GEX_LAF5751A8'
+    date: '20230824'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/1_Control-TG_082423_StLeger_3Pv3_GEX_LAF5751A8/outs'
+    condition: 'control'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+  
+  - sample:
+    id: '2_Scratch-TG_082423_StLeger_3Pv3_GEX_LAF5751A9'
+    date: '20230824'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/2_Scratch-TG_082423_StLeger_3Pv3_GEX_LAF5751A9/outs'
+    condition: 'scratch'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+  
+  - sample:
+    id: '3_KOS-TG_082423_StLeger_3Pv3_GEX_LAF5751A10'
+    date: '20230824'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/3_KOS-TG_082423_StLeger_3Pv3_GEX_LAF5751A10/outs'
+    condition: 'kos'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+  
+  - sample:
+    id: '4_RE-TG_082423_StLeger_3Pv3_GEX_LAF5751A11'
+    date: '20230824'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/4_RE-TG_082423_StLeger_3Pv3_GEX_LAF5751A11/outs'
+    condition: 're'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+
+## June    
+  - sample:
+    id: '1_062923_CON_StLeger_3Pv3_GEX_LAF5352A24'
+    date: '20230629'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/1_062923_CON_StLeger_3Pv3_GEX_LAF5352A24/outs'
+    condition: 'control'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+  
+  - sample:
+    id: '2_062923_SEL_StLeger_3Pv3_GEX_LAF5352A25'
+    date: '20230629'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/2_062923_SEL_StLeger_3Pv3_GEX_LAF5352A25/outs'
+    condition: 'scratch'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+  
+  - sample:
+    id: '3_062923_KOS_StLeger_3Pv3_GEX_LAF5352A26'
+    date: '20230629'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/3_062923_KOS_StLeger_3Pv3_GEX_LAF5352A26/outs'
+    condition: 'kos'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+  
+  - sample:
+    id: '4_062923_RE_StLeger_3Pv3_GEX_LAF5352A27'
+    date: '20230629'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/4_062923_RE_StLeger_3Pv3_GEX_LAF5352A27/outs'
+    condition: 're'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'

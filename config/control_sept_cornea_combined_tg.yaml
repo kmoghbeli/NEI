@@ -1,0 +1,44 @@
+project: 'NeuroImmune'
+
+filename: 'control_sept_cornea_combined_tg.yaml'                                                                            
+
+percent_mito: 10
+# Options: "log", "sct"
+normalization: "sct"
+
+remove_features: ["Lars2", "Gm42418"]
+
+harmony_vars: ["date"]
+
+samples: 
+
+## Sept Cornea - Control 
+  - sample:
+    id: '1_Control-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A29'
+    date: '20230921'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/1_Control-CorneaConj_092123_StLeger_3Pv3_GEX_LAF6152A29/outs'
+    condition: 'control'
+    location: 'cornea'
+    timepoint: 'Day 3'
+    celltype: 'CD45+ or EpCAM+'
+
+## August TG - Control
+  - sample:
+    id: '1_Control-TG_082423_StLeger_3Pv3_GEX_LAF5751A8'
+    date: '20230824'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/1_Control-TG_082423_StLeger_3Pv3_GEX_LAF5751A8/outs'
+    condition: 'control'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+
+## June TG - Control
+  - sample:
+    id: '1_062923_CON_StLeger_3Pv3_GEX_LAF5352A24'
+    date: '20230629'
+    path: '../../../_DATASETS/NeuroImmune/cellranger_outs/1_062923_CON_StLeger_3Pv3_GEX_LAF5352A24/outs'
+    condition: 'control'
+    location: 'tg'
+    timepoint: 'Day 3'
+    celltype: 'CD45+Ly6G-'
+

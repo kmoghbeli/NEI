@@ -1,0 +1,24 @@
+x_path: ./slide_runs/combined_tg_B_KOSvRE_D0.01_L0.1/x.csv
+y_path: ./slide_runs/combined_tg_B_KOSvRE_D0.01_L0.1/y.csv
+out_path: ./slide_runs/combined_tg_B_KOSvRE_D0.01_L0.1/
+y_factor: TRUE
+y_levels: [0, 1]
+eval_type: auc # The performance evaluation metric used. corr for continuous Y and auc for binary Y
+rep_cv: 50  # Don't need this anymore
+alpha_level: 0.05  
+thresh_fdr: 0.2  # If data is super colinear, you want to lower this, default is 0.2
+std_cv: TRUE    # this goes away
+std_y: TRUE     # this goes away
+k: 5            # this goes away
+nreps: 10       # this goes away
+permute: TRUE   # this goes away
+benchmark: FALSE # this goes away
+delta: 
+  - 0.01   
+  - 0.1
+lambda: 0.1 
+SLIDE_iter: 500
+SLIDE_top_feats: 1000000
+CViter: 10
+sampleCV_K: 4
+do_interacts: TRUE

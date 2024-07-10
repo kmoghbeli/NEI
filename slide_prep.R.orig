@@ -1,0 +1,251 @@
+## NeuroImmune SLIDE
+
+#devtools::install_github("Hanxi-002/EssReg")
+#devtools::install_github("Hanxi-002/SLIDEHelper")
+
+library(tidyverse)
+library(tictoc)
+library(Seurat)
+library(EssReg)
+library(SLIDE)
+library(SLIDEHelper)
+#library(tictoc)
+#conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
+
+kaveh_colors1 <- c("#a6611a", "#dfc27d", "#f5f5f5", "#80cdc1", "#018571")
+kaveh_colors2 <- c("#40004b", "#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#f7f7f7", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837", "#00441b")
+kaveh_colors3 <- c("#ff0000", "#f5f5f5","#0000ff")
+
+
+config_dir <- "./config/"
+data_dir <- "./data/"
+model_dir <- "./models/"
+results_dir <- "./results/"
+figures_dir <- "./figures/"
+
+# Parallell Processing
+num_cores <- future::availableCores()
+if(num_cores > 3) {
+  library(doParallel)
+  
+  cl <- makePSOCKcluster(num_cores - 2)
+  registerDoParallel(cl)
+}
+
+### HELPER FUNCTIONS ### 
+subsetNIData <- function(seurat_obj,
+                         celltype_metadata_key,
+                         celltype_metadata_val,
+                         conditions) {
+  
+  ## Subset just the cell types of interest
+  Idents(seurat_obj) <- seurat_obj[[celltype_metadata_key]] %>% rownames_to_column() %>% deframe()
+  seurat_obj <- subset(seurat_obj, idents = celltype_metadata_val)
+  
+  ## Then subset just those belonging to the conditions of interest
+  Idents(seurat_obj) <- seurat_obj$condition
+  seurat_obj <- subset(seurat_obj, idents = conditions)
+
+  data <- GetAssayData(seurat_obj, layer = "data", assay="RNA") %>% 
+    as.matrix() %>% t() %>% as.data.frame() %>% rownames_to_column("barcode") %>% 
+    left_join(tibble(barcode = names(seurat_obj$condition), y = seurat_obj$condition), 
+              by = c("barcode" = "barcode")) %>% 
+    column_to_rownames("barcode") %>% 
+    mutate(y = factor(y, levels = conditions)) %>% 
+    relocate(y)
+  
+  return(data)
+}
+  
+prepSLIDE <- function(data,
+                      out_path = "./",
+                      lambda = 1.0,
+                      delta =  0.01,
+                      n_folds_cv = 5,
+                      rep_cv = 50, 
+                      nreps = 10) {
+  
+  yaml_args <- list()
+  
+  yaml_args$y_factor <- TRUE
+  yaml_args$rep_cv <- rep_cv
+  yaml_args$alpha_level <- 0.05
+  yaml_args$thresh_fdr <- 0.2
+  yaml_args$std_cv <- TRUE
+  yaml_args$std_y <- TRUE
+  yaml_args$delta <- delta
+  yaml_args$lambda <- lambda
+  yaml_args$k <- n_folds_cv
+  yaml_args$nreps <- nreps
+  yaml_args$permute <- TRUE
+  yaml_args$benchmark <- FALSE
+  
+  # Create out folder if it doesn't exist
+  yaml_args$out_path <- paste0(sub("\\/$", "", out_path),"_D", delta, "_L", lambda, "/")
+  dir.create(yaml_args$out_path, showWarnings = FALSE)
+  
+  yaml_args$eval_type <- ifelse(length(levels(data$y)) > 2, "cor", "auc")
+  
+  
+  
+  #cat("Saving output to ", out_path, "\n")
+  
+  x <- data %>% select(-y) %>% rownames_to_column("barcode")
+  y <- data %>% select(y) %>% mutate(y = as.numeric(y) - min(as.numeric(y))) %>% rownames_to_column("barcode") 
+  
+  yaml_args$y_levels <- sort(unique(y$y))
+  
+  yaml_args$x_path <- paste0(yaml_args$out_path, "x.csv")
+  readr::write_csv(x, yaml_args$x_path, col_names = TRUE) 
+  
+  yaml_args$y_path <- paste0(yaml_args$out_path, "y.csv")
+  readr::write_csv(y, yaml_args$y_path, col_names = TRUE) 
+  
+  
+  ## Write YAML file
+  
+  yaml_path = paste0(yaml_args$out_path, "er.yaml")
+  
+  yaml_string <- paste0("x_path: ", yaml_args$x_path, "\n", 
+                        "y_path: ", yaml_args$y_path, "\n", 
+                        "out_path: ", yaml_args$out_path, "\n", 
+                        "y_factor: ", yaml_args$y_factor, "\n", 
+                        "y_levels: [", paste(yaml_args$y_levels, collapse = ', '), "]\n", 
+                        "eval_type: ", yaml_args$eval_type, "\n", 
+                        "rep_cv: ", yaml_args$rep_cv, "\n", 
+                        "alpha_level: ", yaml_args$alpha_level, "\n", 
+                        "thresh_fdr: ", yaml_args$thresh_fdr, "\n", 
+                        "std_cv: ", yaml_args$std_cv, "\n", 
+                        "std_y: ", yaml_args$std_y, "\n", 
+                        "k: ", yaml_args$k, "\n", 
+                        "nreps: ", yaml_args$nreps, "\n", 
+                        "permute: ", yaml_args$permute, "\n", 
+                        "benchmark: ", yaml_args$benchmark, "\n", 
+                        "delta: ", yaml_args$delta, "\n", 
+                        "lambda: ", yaml_args$lambda, "\n")
+  
+  #yaml::write_yaml(yaml_args, yaml_path)
+  readr::write_file(yaml_string, yaml_path)
+  
+  return(0)
+  
+  # cat("Running pipeline 3\n")
+  # 
+  # EssReg::pipelineER3(yaml_path)
+  # 
+  # #check for ER results in output folder
+  # er_results_path = list.files(yaml_args$out_path, pattern = "final_delta")
+  # 
+  # if (0 == length(er_results_path)) {
+  #   print("ER did not complete successfully.\n")
+  #   return(-1)
+  # }
+  # 
+  # er_results_path <- paste0(yaml_args$out_path, er_results_path)
+  # 
+  # Z_matrix <- SLIDEHelper::CalcZMatrix(yaml_args$x_path, er_results_path, yaml_args$out_path)
+  # 
+  # # run slide on these results
+  # SLIDE_res = SLIDEHelper::runSLIDE(y_path = yaml_args$y_path,
+  #                                   z_path = NULL,
+  #                                   z_matrix = Z_matrix,
+  #                                   er_path = er_results_path,
+  #                                   do_interacts = TRUE,
+  #                                   spec = 0.1,
+  #                                   niter = 100)
+  # num_top_feats <- 10
+  # condition <- yaml_args$eval_type
+  # 
+  # SLIDE_res <- GetTopFeatures(yaml_args$x_path, yaml_args$y_path, er_results_path, yaml_args$out_path,
+  #                             SLIDE_res, num_top_feats = 10, condition)
+  # 
+  # plotSigGenes(SLIDE_res, yaml_args$out_path, plot_interaction = TRUE)
+  # 
+  # #the SLIDE_res has to be the output from GetTopFeatures
+  # CalcControlPerformance(z_matrix = Z_matrix, yaml_args$y_path, SLIDE_res, niter = 1000, condition, yaml_args$out_path)
+  # 
+  # return(0)
+}
+
+# Run Slide Immune analyses on Sept Cornea, June TG, Aug TG
+# - all immune, myeloid, and T cells, epithelial
+
+# Datasets to prep
+# slide_comparisons <- expand_grid(dataset = c("july_cornea_sct", "sept_cornea_sct", "june_tg_sct", "aug_tg_sct"), 
+#                                  metadata_key = c("cell_L1", "cell_L2"), 
+#                                  metadata_val = c("immune", "epithelial", "Mye", "T", "B"), 
+#                                  compare1 = c("control", "scratch", "kos", "re"), 
+#                                  compare2 = c("control", "scratch", "kos", "re")) %>% 
+#   filter(compare1 != compare2, 
+#          (grepl("cornea", dataset) & (metadata_val %in% c("immune", "epithelial", "Mye", "T"))) | 
+#            (grepl("tg", dataset) & (metadata_val %in% c("immune", "B", "T"))), 
+#          ("cell_L1" == metadata_key & metadata_val %in% c("immune", "epithelial")) | 
+#            ("cell_L2" == metadata_key & metadata_val %in% c("Mye", "T", "B"))) %>% 
+#   rowwise() %>% 
+#   mutate(id = paste(dataset, metadata_key, metadata_val, min(compare1, compare2), max(compare1, compare2), sep = "_")) %>% 
+#   distinct(id, .keep_all = TRUE) %>% 
+#   select(-id)
+
+slide_comparisons <- expand_grid(dataset = c("combined_tg"), 
+                                 metadata_key = c("cell_L2"), 
+                                 metadata_val = c("Mac", "B", "NK", "T"), 
+                                 compare1 = c("kos"), 
+                                 compare2 = c("re")) %>% 
+  rowwise() %>% 
+  mutate(id = paste(dataset, metadata_key, metadata_val, min(compare1, compare2), max(compare1, compare2), sep = "_")) %>% 
+  distinct(id, .keep_all = TRUE) %>% 
+  select(-id)
+
+# One key thing - Check cell numbers between conditions
+
+### PIPELINE ### 
+
+max_cells_per_condition <- 10000000
+
+for (curr_dataset in unique(slide_comparisons$dataset)) {
+  
+  dataset_comps <- slide_comparisons %>% filter(dataset == curr_dataset)
+
+  config <- yaml::read_yaml(paste0(config_dir, curr_dataset, ".yaml"))
+  
+  seurat_obj <- SeuratDisk::LoadH5Seurat(paste0(data_dir, config$filename, ".h5Seurat"))
+    
+  for (i in 1:nrow(dataset_comps)) { 
+    comp <- dataset_comps[i, ]
+    
+    id <- paste0(curr_dataset, "_", comp$metadata_val, "_", toupper(comp$compare1), "v", toupper(comp$compare2))
+    
+    print(paste0("Prepping: ", id))
+    
+    data <- subsetNIData(seurat_obj, comp$metadata_key, comp$metadata_val, c(comp$compare1, comp$compare2))
+    
+    # filter out cells with more than 1000 zeros (keeping cells with at least 1000 genes expressed)
+    # filter out genes with more than 700 zeros (keeping genes expressed in at least 700 cells)
+    filtered_x <- SLIDEHelper::ZeroFiltering(data %>% select(-y) %>% as.matrix(), 
+                                             1000, 700)
+    
+    ## now use SLIDE:ZeroFiltering(yaml, ) just swap the two threshold numbers g_thresh = gene threshold, c_thresh = cell threhsold
+    
+    filtered_data <- filtered_x %>% as.data.frame() %>% rownames_to_column("barcode") %>% 
+      left_join(data %>% select(y) %>% rownames_to_column("barcode"), 
+                by = c("barcode" = "barcode")) 
+    
+    max_cells_per_condition <- min(max_cells_per_condition, table(filtered_data$y))
+    
+    condition1_barcodes <- filtered_data %>% filter(y == comp$compare1) %>% pull(barcode) %>% sample(size = max_cells_per_condition)
+    condition2_barcodes <- filtered_data %>% filter(y == comp$compare2) %>% pull(barcode) %>% sample(size = max_cells_per_condition)
+    
+    filtered_data <- filtered_data %>% 
+      filter(barcode %in% c(condition1_barcodes, conditiohn2_barcodes)) %>% 
+      column_to_rownames("barcode")
+    
+    prepSLIDE(data = filtered_data, 
+              out_path = paste0("./slide_runs/", id, "/"),
+              lambda = 0.1,
+              delta =  0.01,
+              n_folds_cv = 5, 
+              rep_cv = 50,
+              nreps = 10)
+  }
+}
+
