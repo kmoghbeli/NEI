@@ -1,0 +1,24 @@
+#!/bin/bash
+#SBATCH -t 5-00:00
+
+#SBATCH --job-name=KALLISTO_NEURONS_ALL
+# partition (queue) declaration
+
+#SBATCH --mail-user=kam527@pitt.edu
+
+#SBATCH --mail-type=BEGIN,END,FAIL
+
+#SBATCH --nodes=1
+
+#SBATCH --ntasks=1
+
+#SBATCH --mem=150g
+
+#SBATCH --cpus-per-task=8
+
+module purge
+module load kallisto/0.46.1
+
+# Sample command
+# kallisto quant -i /ix/djishnu/kaveh/kallisto.mouse_index.v10/transcriptome.idx -o kallisto_neuron_outs/1 /ix/cigcore/shared/cigcore_wam30_rfe4/B.Davis_scTakaraSmart_5_2023_1-288_D1-D52/1_mouse_F1_01_Cornea_WGA488_S1_R1_001.fastq.gz /ix/cigcore/shared/cigcore_wam30_rfe4/B.Davis_scTakaraSmart_5_2023_1-288_D1-D52/1_mouse_F1_01_Cornea_WGA488_S1_R2_001.fastq.gz
+

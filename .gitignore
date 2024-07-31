@@ -39,3 +39,7 @@ figures
 slide_runs
 cross_predict
 _old_scripts
+cigcore
+kallisto_neuron_outs
+neuron_kallisto.slurm
+transcripts_to_genes.txt
