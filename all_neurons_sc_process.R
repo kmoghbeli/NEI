@@ -91,5 +91,49 @@ neuron_obj <- PrepSCTFindMarkers(neuron_obj)
 # p3 <- DimPlot(neuron_obj, group.by = "batch_folder") + theme(legend.position = "bottom") + guides(colour = guide_legend(ncol = 2))
 # p1 + p2 + p3
 
-neuron_obj %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, "neurons_all_conditions.h5Seurat"), overwrite = TRUE)
+neuron_obj %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, "seurat/neurons_all_conditions.h5Seurat"), overwrite = TRUE)
 
+########################################################################################################################
+
+neuron_obj <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/neurons_all_conditions.h5Seurat"))
+
+neuron_markers <- c("Trpv1", "Calca", "Tac1", "Gfra2", "Piezo2", "Trpm8", "P2rx3")
+neuroimmune_markers <- c("Ccl2", "Cd44", "Tnfrsf1a", "Tnfrsf11a", "Tnfrsf21", "Vegfa", "Nrp1", "Nrp2", "Ly86", "Il10rb", 
+                         "App", "Ccl21a", "Cd55", "Lgals9", "Mif", "Ptn")
+
+control_neurons <- subset(neuron_obj, subset = condition == "control")
+FeaturePlot(control_neurons, features = neuron_markers, order = TRUE, pt.size = 1.4)
+
+#library(patchwork)
+feature_plots <- list()
+for (i in neuron_markers) {
+  feature_plots[[i]] <- 
+    FeaturePlot(control_neurons, 
+                features = i,
+                #alphcontrol_neuronsa = 0.7,
+                #cols = c("darkgreen"), 
+                order = TRUE, 
+                #max.cutoff = 1.0, 
+                pt.size = 1.4) + NoLegend() + 
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+}
+
+combined_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 4, axis = "bltr")
+ggsave(paste0(figures_dir, "neuron_markers.svg"), plot = combined_feature_plots, width = 10, height = 5)
+
+
+feature_plots <- list()
+for (i in neuroimmune_markers) {
+  feature_plots[[i]] <- 
+    FeaturePlot(control_neurons, 
+                features = i,
+                #alphcontrol_neuronsa = 0.7,
+                #cols = c("darkgreen"), 
+                order = TRUE, 
+                #max.cutoff = 1.0, 
+                pt.size = 1.4) + NoLegend() + 
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+}
+
+combined_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 4, axis = "bltr")
+ggsave(paste0(figures_dir, "neuroimmune_markers.svg"), plot = combined_feature_plots, width = 10, height = 10)
