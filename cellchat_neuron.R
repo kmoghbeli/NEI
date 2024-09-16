@@ -6,6 +6,7 @@ library(CellChat)
 library(patchwork)
 library(ComplexHeatmap)
 options(stringsAsFactors = FALSE)
+options(future.globals.maxSize = 1000*1024^2)
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 
 kaveh_colors1 <- c("#a6611a", "#dfc27d", "#f5f5f5", "#80cdc1", "#018571")
@@ -37,10 +38,12 @@ if(parallel::detectCores(logical=FALSE) > 3) {
 
 #######################################################################################################################################
 
-dataset <- "tg_control_with_neurons"
+location_subset <- "cornea"
+#location <- "tg"
+dataset <- "control_with_neurons"
 grouping <- "celltypeloc"
 
-plot_prefix <- paste0(dataset, "_", grouping, "_")
+plot_prefix <- paste0(location_subset, "_", dataset, "_", grouping, "_")
 
 ppi_project <- FALSE
 
@@ -48,11 +51,24 @@ ppi_project <- FALSE
 
 ## 1) Load the full annotated, normalized dataset  [ONLY NEED TO RUN THIS ONCE TO PREP THE DATASET]
 
-seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, dataset, ".h5Seurat"))  
+seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/", dataset, ".h5Seurat"))  
+
+seurat_data <- subset(seurat_data, subset = location_subset == location | "corneal_afferents" == location)
 
 # Re-level celltypeloc
-seurat_data$celltypeloc <- factor(seurat_data$celltypeloc, 
-                                  levels = c("neuron", "Mye", "NK", "B", "T"))
+seurat_data$celltypeloc <- factor(seurat_data$celltypeloc)
+if ("cornea" == location_subset) {
+  seurat_data$celltypeloc <- plyr::revalue(seurat_data$celltypeloc, 
+                                           c("cornea_B" = "B", "cornea_Epi" = "Epi", "cornea_Mye" = "Mye", "cornea_NK" = "NK", 
+                                             "cornea_other" = "endo_fibro", "cornea_other_imm" = "DC", "cornea_T" = "T", "neuron" = "neuron"))
+} else {
+  seurat_data$celltypeloc <- plyr::revalue(seurat_data$celltypeloc, 
+                                           c("tg_B" = "B", "tg_Mye" = "Mye", "tg_NK" = "NK", "tg_other_imm" = "DC", 
+                                             "tg_T" = "T", "neuron" = "neuron")) 
+}
+
+# seurat_data$celltypeloc <- factor(seurat_data$celltypeloc, 
+#                                   levels = c("neuron", "Mye", "NK", "B", "T"))
 
 # CellChat likes to have this metadata
 seurat_data$samples <- factor(paste0(seurat_data$location, "_", seurat_data$date, "_", seurat_data$condition))
@@ -91,13 +107,14 @@ cellchat <- aggregateNet(cellchat)
 
 cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
 
-cellchat %>% readr::write_rds(paste0(data_dir, "cellchat/cellchat_", dataset, "_", grouping, ".rds"))
+cellchat %>% readr::write_rds(paste0(data_dir, "cellchat/cellchat_", location_subset, "_", dataset, "_", grouping, ".rds"))
 
 #######################################################################################################################################
 #cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_", dataset, "_", grouping, ".rds"))
-cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_trim10_", dataset, "_", grouping, ".rds"))
+#cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_trim10_", dataset, "_", grouping, ".rds"))
+cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_", location_subset, "_", dataset, "_", grouping, ".rds"))
 
-neuron_as_sender <- FALSE
+neuron_as_sender <- TRUE
 
 ## Set Source and Target Groups of Interest
 if (TRUE == neuron_as_sender) {
@@ -186,11 +203,11 @@ target <- levels(cellchat@idents)[target_groups]
 
 # Show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
 # signaling_poi <- cellchat@netP$pathways ## All pathways
-if (TRUE == neuron_as_sender) {
-  signaling_poi <- c("GALECTIN", "MIF", "CCL", "APP", "ADGRE", "PTN")
-} else {
-  signaling_poi <- c("GALECTIN", "APP", "CypA", "CCL", "LAMININ", "PARs", "CD39")
-}
+# if (TRUE == neuron_as_sender) {
+#   signaling_poi <- c("GALECTIN", "MIF", "CCL", "APP", "ADGRE", "PTN")
+# } else {
+#   signaling_poi <- c("GALECTIN", "APP", "CypA", "CCL", "LAMININ", "PARs", "CD39")
+# }
 
 df <- data.frame()
 
@@ -215,11 +232,24 @@ pathway_relative_strength <- pathway_relative_strength / max(pathway_relative_st
 
 pathway_relative_strength.scaled <- scale(pathway_relative_strength)
 
-pathway_relative_strength.log <- log1p(pathway_relative_strength)
+#pathway_relative_strength.log <- log1p(pathway_relative_strength)
 
+## Before: used to filter down to specific pathways
+#heatmap_mtx <- pathway_relative_strength.scaled[intersect(signaling_poi, rownames(pathway_relative_strength.scaled)), ] %>% as.matrix()
 
-heatmap_mtx <- pathway_relative_strength.scaled[intersect(signaling_poi, rownames(pathway_relative_strength.scaled)), ] %>% as.matrix()
-pathway_heatmap.scaled <- ComplexHeatmap::Heatmap(heatmap_mtx, 
+## NOW: filter down to pathways with a scaled strength (z-score) > threshold i.e., 0.8
+pathway_z_score_threshold <- 1.3  # z-score 1.3 ~ 90%
+
+pathway_relative_strength.scaled.significant <- 
+  pathway_relative_strength.scaled  %>% 
+  as.data.frame() %>% 
+  filter(if_any(everything(), ~ . > pathway_z_score_threshold)) %>% 
+  as.matrix()
+
+## will use this in next step to filter the L-R pairs to our Pathways of interest (POI)
+signaling_poi <- rownames(pathway_relative_strength.scaled.significant)  
+
+pathway_heatmap.scaled <- ComplexHeatmap::Heatmap(pathway_relative_strength.scaled.significant, 
                                                   col = rev(RColorBrewer::brewer.pal(11,"Spectral")), 
                                                   cluster_rows = FALSE, 
                                                   cluster_columns = FALSE,
@@ -229,7 +259,7 @@ pathway_heatmap.scaled <- ComplexHeatmap::Heatmap(heatmap_mtx,
                                                   column_names_gp = gpar(fontsize = 14, fontface = "bold"), 
                                                   column_names_rot = 45, 
                                                   heatmap_legend_param = list(title = "Commun\nProb",
-                                                                              at = c(min(heatmap_mtx), max(heatmap_mtx)),
+                                                                              at = c(min(pathway_relative_strength.scaled), max(pathway_relative_strength.scaled)),
                                                                               border = "black", just = "middle",
                                                                               labels = c("min", "max")))
 
@@ -268,17 +298,22 @@ lr_pairs <-
 
 sigLRs <- cellchat@LR$LRsig %>% filter(pathway_name %in% signaling_poi) %>% pull(interaction_name_2)
 
+lr_pair_scaled_threshold <- 1.3
+
 lr_pairs.scaled <- lr_pairs %>% 
   mutate(label = paste0(source, " -> ", target), 
          lr_pair = interaction_name_2) %>% 
   select(label, prob, lr_pair) %>% 
   pivot_wider(names_from = "label", values_from = "prob") %>% 
-  mutate(across(!starts_with("lr_pair"), scale)) %>% 
-  filter(lr_pair %in% sigLRs) %>%   # NOTE: Filter AFTER scaling
+  mutate(across(!starts_with("lr_pair"), scale)) 
+
+lr_pairs.scaled.filtered <- lr_pairs.scaled %>% 
+  filter(lr_pair %in% sigLRs) %>%   # NOTE: Filter AFTER scaling to keep only L-R pairs in our Pathways of interest
+  filter(if_any(!lr_pair, ~ . > lr_pair_scaled_threshold)) %>%   # NOTE: Filter AFTER scaling to keep only L-R pairs with a scaled value above our threshold
   pivot_longer(!lr_pair, names_to = "cc", values_to = "comm_prob") %>% 
   drop_na(comm_prob)
 
-lr_pairs.scaled %>% 
+lr_pairs.scaled.filtered %>% 
   ggplot(., aes(x = lr_pair, y = cc, color = comm_prob)) +
   geom_point(pch = 16, size = 7) +
   theme_linedraw() + 
@@ -286,7 +321,7 @@ lr_pairs.scaled %>%
   scale_colour_gradientn(colors = rev(colorRampPalette(RColorBrewer::brewer.pal(n = 10, name = "Spectral"))(99)), 
                          na.value = "white", 
                          #limits=c(quantile(df$prob, 0,na.rm= T), quantile(df$prob, 1,na.rm= T)),
-                         breaks = c(quantile(lr_pairs.scaled$comm_prob, 0,na.rm= T), quantile(lr_pairs.scaled$comm_prob, 1,na.rm= T)), 
+                         breaks = c(quantile(lr_pairs.scaled$comm_prob, 0, na.rm= T), quantile(lr_pairs.scaled$comm_prob, 1,na.rm= T)), 
                          labels = c("min","max")) +
   #guides(color = guide_colourbar(barwidth = 0.5, title = "Commun. Prob."))
   theme(legend.title = element_text(face = "bold", size = 10),
@@ -295,10 +330,10 @@ lr_pairs.scaled %>%
         axis.title = element_blank(), 
         #aspect.ratio = 0.4, 
         panel.grid.major = element_blank()) + 
-  geom_vline(xintercept=seq(1.5, length(unique(lr_pairs.scaled$lr_pair)) -0.5, 1),lwd=0.1,colour="grey90") + 
-  geom_hline(yintercept=seq(1.5, length(unique(lr_pairs.scaled$cc)) -0.5, 1),lwd=0.1,colour="grey90")
+  geom_vline(xintercept=seq(1.5, length(unique(lr_pairs.scaled.filtered$lr_pair)) -0.5, 1),lwd=0.1,colour="grey90") + 
+  geom_hline(yintercept=seq(1.5, length(unique(lr_pairs.scaled.filtered$cc)) -0.5, 1),lwd=0.1,colour="grey90")
 
-ggsave(paste0(figures_dir, plot_prefix, "bubbles_select_pathways.svg"), plot = last_plot(), width = 14.5, height = 3.4)
+ggsave(paste0(figures_dir, plot_prefix, "bubbles_select_pathways.svg"), plot = last_plot(), width = 25, height = 4)
 #ggsave(paste0(figures_dir, plot_prefix, "bubbles_select_pathways_neuron_target.png"), plot = last_plot(), width = 25, height = 3.4)
 
 
