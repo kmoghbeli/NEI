@@ -5,27 +5,16 @@ library(SeuratDisk)
 library(CellChat)
 library(patchwork)
 library(ComplexHeatmap)
+library(network)
+library(sna)
+library(ggnetwork)
 options(stringsAsFactors = FALSE)
-options(future.globals.maxSize = 1000*1024^2)
+options(future.globals.maxSize = 1000*1024^2 * 16)
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
-
-kaveh_colors1 <- c("#a6611a", "#dfc27d", "#f5f5f5", "#80cdc1", "#018571")
-kaveh_colors2 <- c("#40004b", "#762a83", "#9970ab", "#c2a5cf", "#e7d4e8", "#f7f7f7", "#d9f0d3", "#a6dba0", "#5aae61", "#1b7837", "#00441b")
-kaveh_colors3 <- c("#ff0000", "#f5f5f5","#0000ff")
-
 
 config_dir <- "./config/"
 data_dir <- "../data_objects/"
 figures_dir <- "../figures/"
-
-## CUSTOM GGPLOT THEME
-GG_KM_THEME <- 
-  list(
-    ggprism::theme_prism(palette = "colorblind_safe", 
-                         base_size = 16, 
-                         base_line_size = 1.5),
-    scale_fill_viridis_d(alpha = 0.7, begin = 0.14, end = 0.88)
-  )
 
 # Parallell Processing
 if(parallel::detectCores(logical=FALSE) > 3) {
@@ -37,457 +26,457 @@ if(parallel::detectCores(logical=FALSE) > 3) {
 }
 
 #######################################################################################################################################
+##### PLOTTING FUNCTIONS #####
 
-location_subset <- "cornea"
-#location <- "tg"
-dataset <- "control_with_neurons"
-grouping <- "celltypeloc"
-
-plot_prefix <- paste0(location_subset, "_", dataset, "_", grouping, "_")
-
-ppi_project <- FALSE
-
-#######################################################################################################################################
-
-## 1) Load the full annotated, normalized dataset  [ONLY NEED TO RUN THIS ONCE TO PREP THE DATASET]
-
-seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/", dataset, ".h5Seurat"))  
-
-seurat_data <- subset(seurat_data, subset = location_subset == location | "corneal_afferents" == location)
-
-# Re-level celltypeloc
-seurat_data$celltypeloc <- factor(seurat_data$celltypeloc)
-if ("cornea" == location_subset) {
-  seurat_data$celltypeloc <- plyr::revalue(seurat_data$celltypeloc, 
-                                           c("cornea_B" = "B", "cornea_Epi" = "Epi", "cornea_Mye" = "Mye", "cornea_NK" = "NK", 
-                                             "cornea_other" = "endo_fibro", "cornea_other_imm" = "DC", "cornea_T" = "T", "neuron" = "neuron"))
-} else {
-  seurat_data$celltypeloc <- plyr::revalue(seurat_data$celltypeloc, 
-                                           c("tg_B" = "B", "tg_Mye" = "Mye", "tg_NK" = "NK", "tg_other_imm" = "DC", 
-                                             "tg_T" = "T", "neuron" = "neuron")) 
-}
-
-# seurat_data$celltypeloc <- factor(seurat_data$celltypeloc, 
-#                                   levels = c("neuron", "Mye", "NK", "B", "T"))
-
-# CellChat likes to have this metadata
-seurat_data$samples <- factor(paste0(seurat_data$location, "_", seurat_data$date, "_", seurat_data$condition))
-
-cellchat <- createCellChat(object = seurat_data, group.by = "celltypeloc", assay = "SCT")
-
-cellchat@DB <- CellChatDB.mouse # use CellChatDB.human if running on human data
-
-# subset the expression data of signaling genes for saving computation cost
-cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
-future::plan("multisession", workers = 4) # do parallel
-cellchat <- identifyOverExpressedGenes(cellchat)
-cellchat <- identifyOverExpressedInteractions(cellchat)
-
-# if (ppi_project) { 
-#   # project gene expression data onto PPI (Optional: when running it, USER should set `raw.use = FALSE` in the function `computeCommunProb()` in order to use the projected data)
-#   cellchat <- projectData(cellchat, PPI.mouse)
-#   
-#   cellchat <- computeCommunProb(cellchat, type = "triMean", raw.use = FALSE)
-#   
-# } else {
-#   cellchat <- computeCommunProb(cellchat, type = "triMean") 
-# }
-
-#cellchat <- computeCommunProb(cellchat, type = "triMean") 
-cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1) 
-
-# Users can filter out the cell-cell communication if there are only few cells in certain cell groups. 
-# By default, the minimum number of cells required in each cell group for cell-cell communication is 10.
-cellchat <- filterCommunication(cellchat, min.cells = 10)
-
-# Infer the cell-cell communication at a signaling pathway level
-cellchat <- computeCommunProbPathway(cellchat)
-
-cellchat <- aggregateNet(cellchat)
-
-cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
-
-cellchat %>% readr::write_rds(paste0(data_dir, "cellchat/cellchat_", location_subset, "_", dataset, "_", grouping, ".rds"))
-
-#######################################################################################################################################
-#cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_", dataset, "_", grouping, ".rds"))
-#cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_trim10_", dataset, "_", grouping, ".rds"))
-cellchat <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_", location_subset, "_", dataset, "_", grouping, ".rds"))
-
-neuron_as_sender <- TRUE
-
-## Set Source and Target Groups of Interest
-if (TRUE == neuron_as_sender) {
+## Celltype-to-Celltype Circle Plot
+cc_circle_plot <- function(cellchat_obj, source_groups, target_groups) {
   
-  # Interested in Neuron as source
-  source_groups <- match(c("neuron"), levels(cellchat@idents))
-  target_groups <- match(setdiff(levels(cellchat@idents), c("neuron")), 
-                         levels(cellchat@idents))
-  
-} else {
-  
-  # Interested in Neuron as receiver
-  source_groups <- match(setdiff(levels(cellchat@idents), c("neuron")), 
-                         levels(cellchat@idents))
-  target_groups <- match(c("neuron"), levels(cellchat@idents))
-}
-
-# neurons <- match(c("neuron"), levels(cellchat@idents))
-# all_other_cells <- match(c("cornea_B", "cornea_Epi", "cornea_Mye", "cornea_NK", "cornea_other", "cornea_other_imm", "cornea_T", 
-#                            "tg_B", "tg_Mye", "tg_NK", "tg_other_imm", "tg_T"), 
-#                          levels(cellchat@idents))
-
-circle_plot <- 
-  netVisual_circle(cellchat@net$weight, 
-                   idents.use = levels(cellchat@idents),
-                   targets.use = target_groups, 
-                   sources.use = source_groups,
-                   #vertex.weight = 2.0, 
-                   vertex.label.cex = 2, 
-                   #vertex.size.max = 0.1, 
-                   #color.use = "darkgrey", 
-                   layout = in_circle(),
-                   alpha.edge = 1,
-                   weight.scale = T, 
-                   label.edge= T, 
-                   edge.label.cex = 1.7, 
-                   shape = "none",
-                   edge.curved = 0.1,
-                   arrow.width = 10, 
-                   arrow.size = 0.2, 
-                   margin = 0,
-                   title.name = "Interaction weights/strength")
-  
-svg(paste0(figures_dir, plot_prefix, "circle_plot.svg"), width = 5, height = 5)
-circle_plot
-dev.off()
-
-groupSize <- as.numeric(table(cellchat@idents))
-par(mfrow = c(1,2), xpd=TRUE)
-#netVisual_circle(cellchat@net$count, vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Number of interactions")
-netVisual_circle(cellchat@net$weight, 
-                 sources.use = neurons_and_tg_immune, 
-                 vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
-
-netVisual_circle(cellchat@net$weight, 
-                 targets.use = neurons_and_tg_immune,
-                 vertex.weight = groupSize, weight.scale = T, label.edge= F, title.name = "Interaction weights/strength")
-
-mat <- cellchat@net$weight["neuron",]  # Just Neuron
-mat <- cellchat@net$weight  # All of them
-par(mfcol = c(2,3), xpd=TRUE)
-for (i in 1:nrow(mat)) {
-  mat2 <- matrix(0, nrow = nrow(mat), ncol = ncol(mat), dimnames = dimnames(mat))
-  mat2[i, ] <- mat[i, ]
-  netVisual_circle(mat2, 
-                   vertex.weight = groupSize, 
-                   weight.scale = T, 
-                   edge.weight.max = max(mat), 
-                   title.name = rownames(mat)[i])
-}
-
-# Chord diagram
-par(mfrow=c(1,1))
-netVisual_aggregate(cellchat, signaling = pathways.show, layout = "chord")
-
-# Heatmap
-#par(mfrow=c(1,2))
-cc1 <- netVisual_heatmap(cellchat, color.heatmap = "Reds", measure = "count", font.size = 18) 
-cc2 <- netVisual_heatmap(cellchat, color.heatmap = "Reds", measure = "weight", font.size = 18)
-cc1 + cc2
-
-
-## PATHWAYS HEATMAP
-source <- levels(cellchat@idents)[source_groups]
-target <- levels(cellchat@idents)[target_groups]
-
-# Show all the significant interactions (L-R pairs) from some cell groups (defined by 'sources.use') to other cell groups (defined by 'targets.use')
-# signaling_poi <- cellchat@netP$pathways ## All pathways
-# if (TRUE == neuron_as_sender) {
-#   signaling_poi <- c("GALECTIN", "MIF", "CCL", "APP", "ADGRE", "PTN")
-# } else {
-#   signaling_poi <- c("GALECTIN", "APP", "CypA", "CCL", "LAMININ", "PARs", "CD39")
-# }
-
-df <- data.frame()
-
-for (pathway in cellchat@netP$pathways) {
-  row <- cellchat@netP$prob[, , pathway][source, target] %>% 
-    t() %>% 
+  # Perform Max scaling of matrix subset of source/target groups of interest
+  cc_mtx <- 
+    cellchat_obj@net$weight %>% 
     as.data.frame() %>% 
-    mutate(pathway = pathway)
+    rownames_to_column("source") %>% 
+    filter(source %in% levels(cellchat_obj@idents)[source_groups]) %>% 
+    column_to_rownames("source") %>% 
+    select(levels(cellchat_obj@idents)[target_groups])
   
-  df <- bind_rows(df, row)
+  cc_mtx %>% 
+    mutate(across(everything(), ~ (.x - min(cc_mtx)) / (max(cc_mtx) - min(cc_mtx)))) %>% 
+    rownames_to_column("source") %>% 
+    pivot_longer(!source, names_to = "target", values_to = "strength") %>% 
+    ggnetwork(layout = "circle", arrow.gap = 0.055) %>% 
+    ggplot(aes(x = x, y = y, xend = xend, yend = yend)) +
+    geom_edges(aes(color = strength), size = 2, 
+               arrow = arrow(length = unit(14, "pt"), type = "closed")) +
+    #geom_nodes(color = alpha("black", 1), shape = 15) +  #aes(color = family, size = importance)) + 
+    geom_nodelabel(aes(label = vertex.names), fontface = "bold", color = "black", size = 5, label.padding = unit(0.2, "lines"),) + 
+    #geom_nodelabel(aes(label = vertex.names), fontface = "bold", color = "black", size = 5, label.padding = unit(0.25, "lines"),) + 
+    #geom_edgelabel(aes(label = round(strength, 2)), size = 6, fill = alpha("white", 1)) + 
+    guides(color = guide_colourbar(title = "Relative Communication Strength", title.position = "top", vjust = 0.5, ticks.colour = NA, frame.colour = "black")) + 
+    scale_colour_gradientn(colors = colorRampPalette(RColorBrewer::brewer.pal(n = 10, name = "Greys")[3:9])(10), 
+                           #na.value = "white", 
+                           #limits=c(quantile(df$prob, 0,na.rm= T), quantile(df$prob, 1,na.rm= T)),
+                           breaks = c(0, 1), 
+                           labels = c("Low", "High")
+    ) +
+    theme_blank() + 
+    #coord_cartesian(xlim=c(-0.5, 1.5)) + 
+    scale_x_continuous(limits = c(-0.25, 1.25)) + 
+    scale_y_continuous(limits = c(-0.1, 1.1)) + 
+    theme(legend.position = "bottom", 
+          legend.title.align = 0.5, 
+          plot.title = element_text(face = "bold", size = 12, hjust = 0.5, vjust = 0.5),
+          aspect.ratio = 1.1)
 }
 
-pathway_relative_strength <- df %>% 
-  column_to_rownames("pathway")
+## PATHWAYS HEATMAP ##
+pathways_heatmap <- function(cellchat_obj, signaling_poi, source_groups, target_groups, title, show_legend = TRUE) {
 
-colnames(pathway_relative_strength) <- paste0(source, " -> ", target)
+  source <- levels(cellchat_obj@idents)[source_groups]
+  target <- levels(cellchat_obj@idents)[target_groups]
+  
+  df <- data.frame()
+  
+  for (pathway in cellchat_obj@netP$pathways) {
+    row <- cellchat_obj@netP$prob[, , pathway][source, target] %>% 
+      t() %>% 
+      as.data.frame() %>% 
+      mutate(pathway = pathway)
+    
+    df <- bind_rows(df, row)
+  }
+  
+  pathway_relative_strength <- df %>% column_to_rownames("pathway")
+  
+  colnames(pathway_relative_strength) <- paste0(source, " -> ", target) %>% str_replace("neuron", "Neuron")
+  
+  # Remove rows for pathways with all zeroes
+  pathway_relative_strength <- pathway_relative_strength %>% filter_all(any_vars(. != 0))
+  
+  pathway_relative_strength <- pathway_relative_strength / max(pathway_relative_strength)
+  
+  pathway_relative_strength.scaled <- scale(pathway_relative_strength)
+  
+  ## Filter down to pathways with a scaled strength (z-score) > threshold i.e., 0.8
+  # pathway_z_score_threshold <- 1.3  # z-score 1.3 ~ 90%
+  # 
+  # pathway_relative_strength.scaled.significant <-
+  #   pathway_relative_strength.scaled  %>%
+  #   as.data.frame() %>%
+  #   filter(if_any(everything(), ~ . > 1.0)) %>%
+  #   as.matrix()
+  # 
+  # signaling_poi <- rownames(pathway_relative_strength.scaled.significant)   ## will use this in next step to filter the L-R pairs to our Pathways of interest (POI)
+  
+  na_pathways <- setdiff(signaling_poi, rownames(pathway_relative_strength.scaled))
+  na_vals <- data.frame(matrix(data = NA, ncol = ncol(pathway_relative_strength.scaled), nrow = length(na_pathways)))
+  rownames(na_vals) <- na_pathways
+  colnames(na_vals) <- colnames(pathway_relative_strength.scaled)
+  
+  mtx_min <- min(pathway_relative_strength.scaled)
+  mtx_max <- max(pathway_relative_strength.scaled)
+  
+  pathway_relative_strength.scaled <- rbind(pathway_relative_strength.scaled, na_vals)
+  
+  heatmap_mtx <- pathway_relative_strength.scaled[intersect(signaling_poi, rownames(pathway_relative_strength.scaled)), ] %>% as.matrix()
+  
+  ComplexHeatmap::Heatmap(heatmap_mtx,
+                          col = rev(RColorBrewer::brewer.pal(11,"Spectral")), 
+                          column_title = title, 
+                          column_title_side = "top", column_title_gp = gpar(fontsize = 12, fontface = "bold"),
+                          cluster_rows = FALSE, 
+                          cluster_columns = FALSE,
+                          row_names_side = "left", 
+                          row_title = "Pathways", row_title_gp = gpar(fontsize = 18, fontface = "bold"),
+                          row_names_gp = gpar(fontsize = 14, fontface = "bold"),
+                          column_names_gp = gpar(fontsize = 14, fontface = "bold"), 
+                          column_names_rot = 45, 
+                          width = ncol(heatmap_mtx) * unit(10, "mm"), 
+                          height = nrow(heatmap_mtx) * unit(7, "mm"), 
+                          show_heatmap_legend = show_legend,
+                          heatmap_legend_param = list(title = "Commun\nProb",
+                                                      at = c(mtx_min, mtx_max),
+                                                      legend_height = unit(35, "mm"),
+                                                      grid_width = unit(5, "mm"), 
+                                                      border = "black", just = "middle",
+                                                      labels = c("min", "max")))
+}
 
-# Remove rows for pathways with all zeroes
-pathway_relative_strength <- pathway_relative_strength %>% filter_all(any_vars(. != 0))
-
-pathway_relative_strength <- pathway_relative_strength / max(pathway_relative_strength)
-
-pathway_relative_strength.scaled <- scale(pathway_relative_strength)
-
-#pathway_relative_strength.log <- log1p(pathway_relative_strength)
-
-## Before: used to filter down to specific pathways
-#heatmap_mtx <- pathway_relative_strength.scaled[intersect(signaling_poi, rownames(pathway_relative_strength.scaled)), ] %>% as.matrix()
-
-## NOW: filter down to pathways with a scaled strength (z-score) > threshold i.e., 0.8
-pathway_z_score_threshold <- 1.3  # z-score 1.3 ~ 90%
-
-pathway_relative_strength.scaled.significant <- 
-  pathway_relative_strength.scaled  %>% 
-  as.data.frame() %>% 
-  filter(if_any(everything(), ~ . > pathway_z_score_threshold)) %>% 
-  as.matrix()
-
-## will use this in next step to filter the L-R pairs to our Pathways of interest (POI)
-signaling_poi <- rownames(pathway_relative_strength.scaled.significant)  
-
-pathway_heatmap.scaled <- ComplexHeatmap::Heatmap(pathway_relative_strength.scaled.significant, 
-                                                  col = rev(RColorBrewer::brewer.pal(11,"Spectral")), 
-                                                  cluster_rows = FALSE, 
-                                                  cluster_columns = FALSE,
-                                                  row_names_side = "left", 
-                                                  row_title = "Pathways", row_title_gp = gpar(fontsize = 18, fontface = "bold"),
-                                                  row_names_gp = gpar(fontsize = 14, fontface = "bold"),
-                                                  column_names_gp = gpar(fontsize = 14, fontface = "bold"), 
-                                                  column_names_rot = 45, 
-                                                  heatmap_legend_param = list(title = "Commun\nProb",
-                                                                              at = c(min(pathway_relative_strength.scaled), max(pathway_relative_strength.scaled)),
-                                                                              border = "black", just = "middle",
-                                                                              labels = c("min", "max")))
-
-# pathway_heatmap.log <- 
-#   ComplexHeatmap::Heatmap(pathway_relative_strength.log[signaling_poi, ] %>% as.matrix(), 
-#                           col = rev(RColorBrewer::brewer.pal(11,"Spectral")), 
-#                           cluster_rows = FALSE, 
-#                           cluster_columns = FALSE,
-#                           row_names_side = "left", 
-#                           row_title = "Pathways", row_title_gp = gpar(fontsize = 18, fontface = "bold"),
-#                           row_names_gp = gpar(fontsize = 14, fontface = "bold"),
-#                           column_names_gp = gpar(fontsize = 14, fontface = "bold"), 
-#                           column_names_rot = 45, 
-#                           # heatmap_legend_param = list(title = "Commun.\nProb", 
-#                           #                             #at = c(0, 1), 
-#                           #                             border = "black", just = "middle",
-#                           #                             labels = c("min", "max"))
-#   )
-
-svg(paste0(figures_dir, plot_prefix, "pathway_heatmap.svg"), width = 5, height = 5)
-pathway_heatmap.scaled
-dev.off()
-
+#lr_bubble_plot(cellchat.tg, neuron_rec_signaling_poi, tg_immune, tg_neuron, "TG")
 
 ## LIGAND-RECEPTOR BUBBLE PLOTS
-lr_pairs <- 
-  netVisual_bubble(cellchat, 
-                 sources.use = source_groups, 
-                 targets.use = target_groups, 
-                 color.heatmap = c("Spectral"), 
-                 sort.by.source.priority = T,
-                 thresh = 0.05, 
-                 font.size = 14, 
-                 dot.size.min = 7, 
-                 return.data = TRUE)$communication
+lr_bubble_plot <- function(cellchat_obj, signaling_poi, source_groups, target_groups, title, show_legend = TRUE) {
+  
+  lr_pairs <- 
+    netVisual_bubble(cellchat_obj, 
+                     sources.use = source_groups, 
+                     targets.use = target_groups, 
+                     color.heatmap = c("Spectral"), 
+                     sort.by.source.priority = T,
+                     thresh = 0.05, 
+                     font.size = 14, 
+                     dot.size.min = 7, 
+                     return.data = TRUE)$communication
 
-sigLRs <- cellchat@LR$LRsig %>% filter(pathway_name %in% signaling_poi) %>% pull(interaction_name_2)
+  sigLRs <- cellchat_obj@LR$LRsig %>% filter(pathway_name %in% signaling_poi) %>% pull(interaction_name_2)
+  
+  lr_pairs.scaled <- lr_pairs %>% 
+    mutate(label = paste0(source, " -> ", target), 
+           lr_pair = interaction_name_2) %>% 
+    select(label, prob, lr_pair) %>% 
+    pivot_wider(names_from = "label", values_from = "prob") %>% 
+    mutate(across(!starts_with("lr_pair"), scale)) %>% 
+    filter(lr_pair %in% sigLRs) %>%   # NOTE: Filter AFTER scaling
+    filter(if_any(!lr_pair, ~ . >= 0.5)) %>%   # NOTE: Filter AFTER scaling to keep only L-R pairs with a scaled value above our threshold
+    pivot_longer(!lr_pair, names_to = "cc", values_to = "comm_prob") %>% 
+    mutate(cc = str_replace(cc, "neuron", "Neuron")) %>% 
+    drop_na(comm_prob)
 
-lr_pair_scaled_threshold <- 1.3
+  lr_pairs.scaled %>% 
+    ggplot(., aes(x = factor(cc, levels = paste0(levels(cellchat_obj@idents)[source_groups], " -> ", levels(cellchat_obj@idents)[target_groups])), 
+                  y = lr_pair, color = comm_prob)) +
+    geom_point(pch = 16, size = 7) +
+    theme_linedraw() + 
+    guides(color = guide_colourbar(title = "Commun\nProb", ticks.colour = NA, frame.colour = "black")) + 
+    scale_colour_gradientn(colors = rev(colorRampPalette(RColorBrewer::brewer.pal(n = 10, name = "Spectral"))(99)), 
+                           na.value = "white", 
+                           #limits=c(quantile(df$prob, 0,na.rm= T), quantile(df$prob, 1,na.rm= T)),
+                           breaks = c(quantile(lr_pairs.scaled$comm_prob, 0,na.rm= T), quantile(lr_pairs.scaled$comm_prob, 1,na.rm= T)), 
+                           labels = c("min","max")) +
+    #guides(color = guide_colourbar(barwidth = 0.5, title = "Commun. Prob."))
+    theme(legend.title = element_text(face = "bold", size = 10),
+          #legend.key.size = unit(100, 'mm'),
+          axis.text = element_text(face = "bold", size = 18),
+          axis.text.x = element_text(angle = 45, hjust = 1), 
+          axis.text.y = element_text(face = "bold.italic"), 
+          axis.title = element_blank(), 
+          #aspect.ratio = 0.4, 
+          panel.grid.major = element_blank(), 
+          plot.title = element_text(face = "bold", size = 12, hjust = 0.5, vjust = 0.5)
+    ) + 
+    ggtitle(title) + 
+    geom_vline(xintercept=seq(1.5, length(unique(lr_pairs.scaled$lr_pair)) -0.5, 1),lwd=0.1,colour="grey90") + 
+    geom_hline(yintercept=seq(1.5, length(unique(lr_pairs.scaled$cc)) -0.5, 1),lwd=0.1,colour="grey90")
+}
 
-lr_pairs.scaled <- lr_pairs %>% 
-  mutate(label = paste0(source, " -> ", target), 
-         lr_pair = interaction_name_2) %>% 
-  select(label, prob, lr_pair) %>% 
-  pivot_wider(names_from = "label", values_from = "prob") %>% 
-  mutate(across(!starts_with("lr_pair"), scale)) 
-
-lr_pairs.scaled.filtered <- lr_pairs.scaled %>% 
-  filter(lr_pair %in% sigLRs) %>%   # NOTE: Filter AFTER scaling to keep only L-R pairs in our Pathways of interest
-  filter(if_any(!lr_pair, ~ . > lr_pair_scaled_threshold)) %>%   # NOTE: Filter AFTER scaling to keep only L-R pairs with a scaled value above our threshold
-  pivot_longer(!lr_pair, names_to = "cc", values_to = "comm_prob") %>% 
-  drop_na(comm_prob)
-
-lr_pairs.scaled.filtered %>% 
-  ggplot(., aes(x = lr_pair, y = cc, color = comm_prob)) +
-  geom_point(pch = 16, size = 7) +
-  theme_linedraw() + 
-  guides(color = guide_colourbar(title = "Commun\nProb", ticks.colour = NA, frame.colour = "black")) + 
-  scale_colour_gradientn(colors = rev(colorRampPalette(RColorBrewer::brewer.pal(n = 10, name = "Spectral"))(99)), 
-                         na.value = "white", 
-                         #limits=c(quantile(df$prob, 0,na.rm= T), quantile(df$prob, 1,na.rm= T)),
-                         breaks = c(quantile(lr_pairs.scaled$comm_prob, 0, na.rm= T), quantile(lr_pairs.scaled$comm_prob, 1,na.rm= T)), 
-                         labels = c("min","max")) +
-  #guides(color = guide_colourbar(barwidth = 0.5, title = "Commun. Prob."))
-  theme(legend.title = element_text(face = "bold", size = 10),
-        axis.text.x = element_text(angle = 45, hjust = 1), 
-        axis.text = element_text(face = "bold", size = 14),
-        axis.title = element_blank(), 
-        #aspect.ratio = 0.4, 
-        panel.grid.major = element_blank()) + 
-  geom_vline(xintercept=seq(1.5, length(unique(lr_pairs.scaled.filtered$lr_pair)) -0.5, 1),lwd=0.1,colour="grey90") + 
-  geom_hline(yintercept=seq(1.5, length(unique(lr_pairs.scaled.filtered$cc)) -0.5, 1),lwd=0.1,colour="grey90")
-
-ggsave(paste0(figures_dir, plot_prefix, "bubbles_select_pathways.svg"), plot = last_plot(), width = 25, height = 4)
-#ggsave(paste0(figures_dir, plot_prefix, "bubbles_select_pathways_neuron_target.png"), plot = last_plot(), width = 25, height = 3.4)
+#lr_bubble_plot(cellchat.tg, neuron_send_signaling_poi, tg_neuron, tg_immune, "TG")
 
 
-top_interactions <- 
-  netVisual_bubble(cellchat, 
-                   sources.use = neurons, 
-                   targets.use = immune, 
-                   signaling = signaling_poi,
-                   color.heatmap = c("Spectral"), 
-                   sort.by.source.priority = T,
-                   thresh = 0.05, 
-                   font.size = 14, 
-                   dot.size.min = 7, 
-                   return.data = TRUE)
+#######################################################################################################################################
+
+cellchat.tg <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_tg_control_with_neurons_celltypeloc.rds"))
+cellchat.cornea <- readr::read_rds(paste0(data_dir, "cellchat/cellchat_cornea_control_with_neurons_celltypeloc.rds"))
+
+tg_neuron <- match(c("Neuron"), levels(cellchat.tg@idents))
+tg_immune <- match(setdiff(levels(cellchat.tg@idents), c("Neuron")), 
+                   levels(cellchat.tg@idents))
+
+cornea_neuron <- match(c("Neuron"), levels(cellchat.cornea@idents))
+cornea_immune <- match(setdiff(levels(cellchat.cornea@idents), c("Neuron")), 
+                   levels(cellchat.tg@idents))
+
+
+## Cell-Cell Plots
+tg_forward_cc <- cc_circle_plot(cellchat.tg, tg_neuron, tg_immune) + ggtitle("TG") + theme(legend.position="none")
+cornea_forward_cc <- cc_circle_plot(cellchat.cornea, cornea_neuron, cornea_immune) + ggtitle("Cornea") + theme(legend.position="none")
+
+tg_forward_cc + cornea_forward_cc + patchwork::plot_layout(guides = "collect", ncol = 2) &
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+ggsave(paste0(figures_dir, "circle_plot_forward.svg"), width = 5, height = 5)
+
+tg_reverse_cc <- cc_circle_plot(cellchat.tg, tg_immune, tg_neuron) + ggtitle("TG")
+cornea_reverse_cc <- cc_circle_plot(cellchat.cornea, cornea_immune, cornea_neuron) + ggtitle("Cornea")
+
+tg_reverse_cc + cornea_reverse_cc + patchwork::plot_layout(guides = "collect", ncol = 2) &
+  theme(legend.position = "bottom", legend.direction = "horizontal")
+
+ggsave(paste0(figures_dir, "circle_plot_reverse.svg"), width = 5, height = 5)
+
+
+
+## Pathways Heatmaps
+neuron_send_signaling_poi <- c("LAMININ", "COLLAGEN", "GALECTIN", "PTN", "APP", "MIF", "Cholesterol", "ADGRL", "ADGRE", "CCL", "CSF", "CypA", "CD39") #  "PARs", 
+neuron_rec_signaling_poi <- c("LAMININ", "APP", "CNTN", "CypA", "Prostaglandin", "FN1", "CCL", "THBS", "TGFb", "PSAP", "CXCL", "PARs")
+
+tg_forward_heatmap <- pathways_heatmap(cellchat.tg, neuron_send_signaling_poi, tg_neuron, tg_immune, "TG")
+cornea_forward_heatmap <- pathways_heatmap(cellchat.cornea, neuron_send_signaling_poi, cornea_neuron, cornea_immune, "Cornea", show_legend = FALSE)
+
+svg(paste0(figures_dir, "pathway_heatmap_forward.svg"), width = 14, height = 7)
+draw(tg_forward_heatmap + cornea_forward_heatmap, ht_gap = unit(1, "cm"))
+dev.off()
+
+
+tg_reverse_heatmap <- pathways_heatmap(cellchat.tg, neuron_rec_signaling_poi, tg_immune, tg_neuron, "TG")
+cornea_reverse_heatmap <- pathways_heatmap(cellchat.cornea, neuron_rec_signaling_poi, cornea_immune, cornea_neuron, "Cornea", show_legend = FALSE)
+
+svg(paste0(figures_dir, "pathway_heatmap_reverse.svg"), width = 14, height = 7)
+draw(tg_reverse_heatmap + cornea_reverse_heatmap, ht_gap = unit(1, "cm"))
+dev.off()
+
+
+tg_forward_bubble <- lr_bubble_plot(cellchat.tg, neuron_send_signaling_poi, tg_neuron, tg_immune, "TG")
+cornea_forward_bubble <- lr_bubble_plot(cellchat.cornea, neuron_send_signaling_poi, cornea_neuron, cornea_immune, "Cornea", show_legend = FALSE)
+
+tg_forward_bubble + cornea_forward_bubble + patchwork::plot_layout(guides = "collect", ncol = 2) &
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        legend.key.size = unit(1.5, 'cm'), 
+        legend.title = element_text(size=25, face = "bold"),
+        legend.text = element_text(size=20))
+
+ggsave(paste0(figures_dir, "bubbles_forward.svg"), width = 12, height = 27)
+
+tg_reverse_bubble <- lr_bubble_plot(cellchat.tg, neuron_rec_signaling_poi, tg_immune, tg_neuron, "TG")
+cornea_reverse_bubble <- lr_bubble_plot(cellchat.cornea, neuron_rec_signaling_poi, cornea_immune, cornea_neuron, "Cornea")
+
+tg_reverse_bubble + cornea_reverse_bubble + patchwork::plot_layout(guides = "collect", ncol = 2) &
+  theme(legend.position = "right", 
+        legend.direction = "vertical", 
+        legend.key.size = unit(1.5, 'cm'), 
+        legend.title = element_text(size=25, face = "bold"),
+        legend.text = element_text(size=20))
+
+ggsave(paste0(figures_dir, "bubbles_reverse.svg"), width = 12, height = 27)
+
+
+#######################################################################################################################################
+#### NEURON UMAP AND HEATMAP PLOTS #####
+
+neuron_markers <- c("Trpv1", "Calca", "Tac1", "Gfra2", "Piezo2", "Trpm8", "P2rx3", "Mrgprd")
+neuroimmune_markers <- c("Ccl2", "Cd44", "Tnfrsf1a", "Tnfrsf11a", "Tnfrsf21", "Vegfa", "Nrp1", "Nrp2", "Ly86", "Il10rb", 
+                         "App", "Ccl21a", "Cd55", "Lgals9", "Mif", "Ptn")
+
+
+control_neurons <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/neurons_all_conditions.h5Seurat")) %>% 
+  subset(subset = condition == "control")
+
+## DEG List
+Idents(control_neurons) <- control_neurons$seurat_clusters
+control_neurons %>% FindAllMarkers(assay = "SCT", ) %>% 
+  select(cluster, gene, p_val, p_val_adj, everything()) %>% 
+  group_by(cluster) %>% 
+  arrange(p_val_adj, .by_group = TRUE) %>% 
+  write_csv("table3_neuron_cluster_marker_genes.csv")
+
+
+## Leiden clusters UMAP
+neuron_umap <- 
+  DimPlot(control_neurons, 
+        group.by = "seurat_clusters", 
+        reduction = "umap", 
+        label = TRUE, 
+        pt.size = 1.4,
+        label.box = TRUE, 
+        label.size = 5, repel = TRUE) + 
+  NoLegend() + 
+  theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
   
 
-## Look at Ccl2 - Ccr2
-#top_interactions$communication %>% filter("Ccl2" == ligand)
-#cellchat.trim10@net$pval[, , "CCL2_CCR2"]
-
-top_interactions <- 
-  netVisual_bubble(cellchat, 
-                   sources.use = neurons, 
-                   targets.use = immune, 
-                   thresh = 0.05, 
-                   angle.x = 45, 
-                   font.size = 14, 
-                   dot.size.min = 7,
-                   return.data = TRUE)
-
-top_interactions$communication %>% 
-  filter("neuron" == source) %>% 
-  arrange(desc(prob)) %>% 
-  slice_head(n = 25)
-
-top_interactions$communication %>% 
-  #filter("neuron" == source | "neuron" == target) %>% 
-  filter("Ccl2" == ligand | "Ccl2" == receptor)
+#ggsave(paste0(figures_dir, "neuron_umap.svg"), width = 4, height = 4)
 
 
-# Signaling role analysis on the aggregated cell-cell communication network from all signaling pathways
-png(paste0(figures_dir, plot_prefix, "_kos_re_compare_heatmap.png"), width = 20, height = 25, units = "in", res = 150)
-ht1 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "outgoing", width = 10, height = 25)
-ht2 <- netAnalysis_signalingRole_heatmap(cellchat, pattern = "incoming", width = 10, height = 25)
-ht1 + ht2
+## Neuron Feature Plots
+#FeaturePlot(control_neurons, features = neuron_markers, order = TRUE, pt.size = 1.4)
+
+#library(patchwork)
+feature_plots <- list()
+feature_plots[["umap"]] <- neuron_umap + ggtitle(" ")  # To align with the feature plots below
+for (i in neuron_markers) {
+  feature_plots[[i]] <- 
+    FeaturePlot(control_neurons, 
+                features = i,
+                #alphcontrol_neuronsa = 0.7,
+                #cols = c("darkgreen"), 
+                order = TRUE, 
+                #max.cutoff = 1.0, 
+                pt.size = 1.4) + NoLegend() + 
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+          plot.title = element_text(face = "bold.italic"))
+}
+
+combined_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 3, axis = "bltr")
+ggsave(paste0(figures_dir, "neuron_markers.svg"), plot = combined_feature_plots, width = 10, height = 10)
+
+
+feature_plots <- list()
+for (i in neuroimmune_markers) {
+  feature_plots[[i]] <- 
+    FeaturePlot(control_neurons, 
+                features = i,
+                #alphcontrol_neuronsa = 0.7,
+                #cols = c("darkgreen"), 
+                order = TRUE, 
+                #max.cutoff = 1.0, 
+                pt.size = 1.4) + NoLegend() + 
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+          plot.title = element_text(face = "bold.italic"))
+}
+
+combined_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 4, axis = "bltr")
+ggsave(paste0(figures_dir, "neuroimmune_markers.svg"), plot = combined_feature_plots, width = 10, height = 10)
+
+
+## Neuron Markers violin plot
+control_neurons@assays$SCT$data[c(neuron_markers, "Gfra3"), ] %>% 
+  t() %>% 
+  as_tibble(rownames = "barcode") %>% 
+  pivot_longer(!barcode, names_to = "gene", values_to = "value") %>% 
+  ggplot(aes(x = factor(gene, levels = c("Calca", "Trpv1", "Tac1", "Gfra3", "P2rx3", "Gfra2", "Mrgprd", "Trpm8", "Piezo2")), 
+             y = value)) +
+  geom_boxplot(size = 0.5) +
+  geom_point(position = position_jitter(width = .1, seed = 0), size = 1, alpha = .5) + 
+  ggprism::theme_prism() + 
+  theme(axis.title.x = element_blank(), 
+        axis.text.x = element_text(angle = 45, vjust = 0.7, face = "bold.italic")) + 
+  labs(y = "Normalized Expression")
+
+ggsave(paste0(figures_dir, "neuron_markers_boxplot.svg"), width = 5, height = 5)
+
+
+## Neuron Cluster Mean Normalized Expression Heatmaps ## 
+neuron_markers_heatmap <- 
+  c("Trpm8", "Gfra2", "Mrgprd", "Trpv1", "Trpa1", "Tac1", "Calca", "Gfra3", "Ntrk1", "Ntrk2", "Ntrk3", "Ngfr", "Piezo2", "Nefh", "Ret")
+
+immune_markers_heatmap <- 
+  c("Tnfrsf1a", "Cd44", "Il13ra1", "Il10rb", "Vegfa", "Tnfrsf11a", "Tnfrsf21", "Hk1", "Ly86", "Npr2", "Ccl2", "Il1rl1", "Il6ra", "Cd55", "Nrp1")
+
+
+## Stacked plot - proportion of cells expressing each feature and color = intensity (i.e., mean residual of SCT)
+scaled_neuron_counts <- control_neurons@assays$SCT$scale.data[neuron_markers_heatmap, ] %>% t() %>% 
+  as_tibble(rownames = "barcode") %>% 
+  inner_join(control_neurons@meta.data %>% select(seurat_clusters) %>% rownames_to_column("barcode"), 
+             by = join_by("barcode" == "barcode")) %>% 
+  group_by(seurat_clusters) %>% 
+  summarise(across(!barcode, mean)) %>% 
+  ungroup() %>% 
+  column_to_rownames("seurat_clusters") %>% 
+  as.matrix() %>% t()
+
+heatmap <- 
+  ComplexHeatmap::Heatmap(scaled_neuron_counts, 
+                          rect_gp = gpar(col = "black", lwd = 2),
+                          border = TRUE,
+                          border_gp = gpar(col = "black", lwd = 2),
+                          col = rev(RColorBrewer::brewer.pal(11,"RdBu")), 
+                          cluster_rows = FALSE, 
+                          cluster_columns = FALSE,
+                          row_names_side = "left", 
+                          row_names_gp = gpar(fontsize = 14, fontface = "bold.italic"),
+                          column_names_gp = gpar(fontsize = 14, fontface = "bold"), 
+                          column_names_side = "top",
+                          column_names_rot = 0, 
+                          column_names_centered = TRUE,
+                          width = ncol(scaled_neuron_counts) * unit(7, "mm"), 
+                          height = nrow(scaled_neuron_counts) * unit(7, "mm"), 
+                          heatmap_legend_param = list(title = "Mean\nScaled\nExpr",
+                                                      legend_height = unit(35, "mm"),
+                                                      grid_width = unit(5, "mm"),
+                                                      at = c(-5, 0, 5),
+                                                      border = "black", just = "middle",
+                                                      labels = c("-5", "0", "+5"))
+  )
+
+svg(paste0(figures_dir, "heatmap_nm.svg"), width = 5, height = 5)
+heatmap
+dev.off()
+
+
+## Stacked plot - proportion of cells expressing each feature and color = intensity (i.e., mean residual of SCT)
+scaled_neuron_counts <- control_neurons@assays$SCT$scale.data[immune_markers_heatmap, ] %>% t() %>% 
+  as_tibble(rownames = "barcode") %>% 
+  inner_join(control_neurons@meta.data %>% select(seurat_clusters) %>% rownames_to_column("barcode"), 
+             by = join_by("barcode" == "barcode")) %>% 
+  group_by(seurat_clusters) %>% 
+  summarise(across(!barcode, mean)) %>% 
+  ungroup() %>% 
+  column_to_rownames("seurat_clusters") %>% 
+  as.matrix() %>% t()
+
+heatmap <- 
+  ComplexHeatmap::Heatmap(scaled_neuron_counts, 
+                          rect_gp = gpar(col = "black", lwd = 2),
+                          border = TRUE,
+                          border_gp = gpar(col = "black", lwd = 2),
+                          col = rev(RColorBrewer::brewer.pal(11,"RdBu")), 
+                          cluster_rows = FALSE, 
+                          cluster_columns = FALSE,
+                          row_names_side = "left", 
+                          row_names_gp = gpar(fontsize = 14, fontface = "bold.italic"),
+                          column_names_gp = gpar(fontsize = 14, fontface = "bold"), 
+                          column_names_side = "top",
+                          column_names_rot = 0, 
+                          column_names_centered = TRUE,
+                          width = ncol(scaled_neuron_counts) * unit(7, "mm"), 
+                          height = nrow(scaled_neuron_counts) * unit(7, "mm"), 
+                          heatmap_legend_param = list(title = "Mean\nScaled\nExpr",
+                                                      legend_height = unit(35, "mm"),
+                                                      grid_width = unit(5, "mm"),
+                                                      at = c(-5, 0, 5),
+                                                      border = "black", just = "middle",
+                                                      labels = c("-5", "0", "+5"))
+  )
+
+svg(paste0(figures_dir, "heatmap_im.svg"), width = 5, height = 5)
+heatmap
 dev.off()
 
 
 
-#######################################################################################################################################
 
-interactions <- subsetCommunication(cellchat)
-
-# Find the Top N receptors on the neurons (allow neurons to also be senders)
-interactions %>% 
-  filter("neuron" == target) %>% 
-  group_by(receptor) %>% 
-  arrange(pval, desc(prob)) %>% 
-  slice_head(n = 1) %>% 
-  ungroup() %>% 
-  arrange(pval, desc(prob))
-
-# Find the Top N receptors on the neurons (do not allow neurons to also be senders)
-topN_receptor_excl_neuron_send <- 
-  interactions %>% 
-  filter("neuron" == target, "neuron" != source) %>% 
-  group_by(receptor) %>% 
-  arrange(pval, desc(prob)) %>% 
-  slice_head(n = 1) %>% 
-  ungroup() %>% 
-  arrange(pval, desc(prob))
-
-VlnPlot(seurat_data, assay = "SCT", layer = "data", stack = TRUE, flip = TRUE,
-        group.by = "celltypeloc",
-        features = sub("ITGA3_\\w*", "Itga3", topN_receptor_excl_neuron_send$receptor[1:10]),
-        ) + NoLegend()
-
-# Find the Top N ligands on the neurons (allow neurons to also be receivers)
-interactions %>% 
-  filter("neuron" == source) %>% 
-  group_by(ligand) %>% 
-  arrange(pval, desc(prob)) %>% 
-  slice_head(n = 1) %>% 
-  ungroup() %>% 
-  arrange(pval, desc(prob))
-
-# Find the Top N ligands on the neurons (do not allow neurons to also be receivers)
-topN_ligand_excl_neuron_rec <- 
-  interactions %>% 
-  filter("neuron" == source, "neuron" != target) %>% 
-  group_by(ligand) %>% 
-  arrange(pval, desc(prob)) %>% 
-  slice_head(n = 1) %>% 
-  ungroup() %>% 
-  arrange(pval, desc(prob))
-
-VlnPlot(seurat_data, assay = "SCT", layer = "data", stack = TRUE, flip = TRUE,
-        group.by = "celltypeloc",
-        features = sub("ITGA3_\\w*", "Itga3", topN_ligand_excl_neuron_rec$ligand[1:10]),
-) + NoLegend()
-
-brian_genes <- c("Ccr2", 
-                 "Ifngr1", "Ifngr2", "Ifnar1", "Ifnar2", 
-                 "Tnfrsf21", "Tnfrsf11a", "Tnfrsf1a", 
-                 "Il4ra", "Il6", "Il6st", "Il10rb", "Il13ra1")
-
-VlnPlot(seurat_data, assay = "SCT", layer = "data", stack = TRUE, flip = TRUE,
-        group.by = "celltypeloc",
-        features = brian_genes,
-) + NoLegend()
-
-#######################################################################################################################################
-
-library(leiden)
-
-## Neuron Markers and Co-expression with ligands from above
-seurat_data.neurons <- subset(seurat_data, subset = cell_L2 == "neuron")
-
-seurat_data.neurons <- seurat_data.neurons %>% 
-  SCTransform(vst.flavor = "v2", return.only.var.genes = FALSE) %>% 
-  RunPCA(assay = "SCT", npcs = 50, verbose = TRUE) %>% 
-  RunUMAP(assay = "SCT", dims = 1:30) %>% 
-  FindNeighbors(assay = "SCT", dims = 1:30, verbose = TRUE) %>%
-  FindClusters(resolution = 1.0, method = "igraph", algorithm = "Leiden") %>% 
-  PrepSCTFindMarkers(verbose = TRUE)
-
-VlnPlot(seurat_data.neurons, 
-        assay = "SCT", 
-        layer = "data", 
-        stack = TRUE, flip = TRUE,
-        group.by = "seurat_clusters",
-        features = c("Trpv1", "Calca", "Tac1", "GFRa2", "Piezo2", "Trpm8", 
-                     "App", "Lgals9", "Mif", "Ccl2")) + 
-  NoLegend()
-
-FeaturePlot(seurat_data.neurons, features = c("Trpv1", "Calca", "Tac1", "GFRa2", "Piezo2", "Trpm8", 
-                                              "App", "Lgals9", "Mif"))
-
-DotPlot(seurat_data, 
-        assay = "SCT", 
-        group.by = "location",
-        features = c("Ccl2", "Ccr2", "App"))
-
-AverageExpression(seurat_data, 
-                  assays = c("SCT"),
-                  features = c("Ccl2", "Ccr2"), 
-                  group.by = "location")
-
-hist(seurat_data.neurons@assays$RNA$counts["Ccl2", ])
-hist(seurat_data.neurons@assays$SCT$data["Ccl2", ])
 
 #######################################################################################################################################
 ## Generate TG Immune Umap with Markers
-combined_tg <- seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "combined_tg_annot.h5Seurat"))  
+
+immune_markers <- c("Ptprc", "Pax5", "Cd19", "Ighm", 
+                    "Cd3d", 
+                    "Klrb1c", 
+                    "Adgre1", "Cd83","Cd68")
+
+combined_tg <- seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/combined_tg_annot.h5Seurat"))
+  # subset(subset = cell_L2 %in% c("Mye", "NK", "B", "T")) %>% 
+  # RunPCA(assay = "SCT", npcs = 50) %>% 
+  # RunUMAP(assay = "SCT", reduction = "pca", dims = 1:50)
 
 # Immune Cell Proportions
 combined_tg_props <- combined_tg@meta.data %>% 
@@ -507,7 +496,7 @@ tg_umap <- DimPlot(combined_tg,
                    label = TRUE, label.box = TRUE, label.size = 5, repel = TRUE) + 
   NoLegend() + ggtitle("TG immune cell proportions")
 
-ggsave(paste0(figures_dir, "umap.svg"), plot = tg_umap, width = 5, height = 5)
+ggsave(paste0(figures_dir, "tg_umap.svg"), width = 5, height = 5)
 
 # combined_tg_props %>% 
 #   ggplot(aes(cell_L2, prop)) + 
@@ -517,35 +506,126 @@ ggsave(paste0(figures_dir, "umap.svg"), plot = tg_umap, width = 5, height = 5)
 #   labs(x = "", y = "Proportion of TG immune cells") + 
 #   theme(aspect.ratio = 1.7)
 
-tg_immune_markers <- c("Ptprc", "Pax5", "Cd19", "Ighm", 
-                       "Cd3d", 
-                       "Klrb1c", 
-                       "Adgre1", "Cd83","Cd68")
-
-#library(patchwork)
 feature_plots <- list()
-for (i in tg_immune_markers) {
+for (i in immune_markers) {
   feature_plots[[i]] <- 
     FeaturePlot(combined_tg, 
                 features = i,
                 #alpha = 0.7,
                 #cols = c("darkgreen"), 
                 order = TRUE, 
-                max.cutoff = 1.0, 
+                raster = TRUE,
+                max.cutoff = 1, 
                 pt.size = 1.4) + NoLegend() + 
-    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"))
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+          plot.title = element_text(face = "bold.italic"),
+          axis.ticks = element_blank(), 
+          axis.title = element_blank(), 
+          axis.text = element_blank())
 }
 
-combined_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 5, axis = "bltr")
-ggsave(paste0(figures_dir, "features.svg"), plot = combined_feature_plots, width = 10, height = 5)
+combined_tg_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 3, axis = "bltr")
+ggsave(paste0(figures_dir, "tg_features.svg"), width = 7, height = 7)
+
+
+
+## Generate Cornea Immune Umap with Markers
+## Generate TG Immune Umap with Markers
+sept_cornea <- seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/sept_cornea_annot.h5Seurat")) %>% 
+  subset(subset = cell_L2 %in% c("Mye", "NK", "B", "T")) %>% 
+  RunPCA(assay = "SCT", npcs = 50) %>% 
+  RunUMAP(assay = "SCT", reduction = "pca", dims = 1:50)
+
+# Immune Cell Proportions
+sept_cornea_props <- sept_cornea@meta.data %>% 
+  filter("control" == condition, cell_L2 %in% c("Mye", "NK", "B", "T")) %>% 
+  group_by(condition, cell_L2) %>% 
+  summarise(n = n(), .groups = "drop_last") %>%
+  mutate(prop = round(n / sum(n) * 100, digits = 1))
+
+sept_cornea$umap_label <- factor(paste0(sept_cornea$cell_L2, "\n",
+                                        sept_cornea_props$prop[as.numeric(sept_cornea$cell_L2)], 
+                                        "%"))
+
+cornea_umap <- DimPlot(sept_cornea, 
+                       group.by = "umap_label", 
+                       reduction = "umap", 
+                       label = TRUE, label.box = TRUE, label.size = 5, repel = TRUE) + 
+  NoLegend() + ggtitle("Cornea immune cell proportions")
+
+ggsave(paste0(figures_dir, "cornea_umap.svg"), width = 5, height = 5)
+
+feature_plots <- list()
+for (i in immune_markers) {
+  feature_plots[[i]] <- 
+    FeaturePlot(sept_cornea, 
+                features = i,
+                #alpha = 0.7,
+                #cols = c("darkgreen"), 
+                order = TRUE, 
+                raster = TRUE, 
+                max.cutoff = 1, 
+                pt.size = 1.4) + NoLegend() + 
+    theme(plot.margin = unit(c(0, 0, 0, 0), "cm"), 
+          plot.title = element_text(face = "bold.italic"),
+          axis.ticks = element_blank(), 
+          axis.title = element_blank(), 
+          axis.text = element_blank())
+}
+
+combined_cornea_feature_plots <- cowplot::plot_grid(plotlist = feature_plots, ncol = 3, axis = "bltr")
+ggsave(paste0(figures_dir, "cornea_features.svg"), width = 7, height = 7)
+
+
+cowplot::plot_grid(plotlist = list(tg_umap, combined_tg_feature_plots, cornea_umap, combined_cornea_feature_plots), 
+                   ncol = 2, axis = "bltr")
+
+ggsave(paste0(figures_dir, "all_umap_features.svg"), width = 10, height = 10)
 
 #######################################################################################################################################
-## Read in Peter's UMAP embeddings and use to generate Neuron UMAPs
+###### BUILD CELLCHAT OBJECT [ONLY NEED TO RUN THIS ONCE TO PREP THE DATASET] ######
 
-# seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/tg_control_with_neurons.h5Seurat"))  
-# 
-# neurons <- subset(seurat_data, celltypeloc == "neuron")
+location_subset <- "TG"
+dataset <- paste0(str_to_lower(location_subset), "_control_with_neurons")
+grouping <- "celltypeloc"
 
-Convert("../data_objects/Neurons_SMARTseq_Analysis.h5ad", assay = "RNA", dest = "h5seurat", overwrite = TRUE)
-neurons <- LoadH5Seurat("../data_objects/Neurons_SMARTseq_Analysis.h5seurat")
+plot_prefix <- paste0(dataset, "_", grouping, "_", ifelse(neuron_as_sender, "neuron_send_", "neuron_rec_"))
+
+## 1) Load the full annotated, normalized dataset  
+seurat_data <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/control_with_neurons.h5Seurat"))  
+
+seurat_data <- subset(seurat_data, subset = location %in% c(str_to_lower(location_subset), "corneal_afferents") & cell_L2 %in% c("neuron", "Mye", "NK", "B", "T"))
+
+# Re-level celltypeloc
+seurat_data$celltypeloc <- factor(seurat_data$cell_L2, levels = c("neuron", "Mye", "NK", "B", "T"), labels = c("Neuron", "Mye", "NK", "B", "T"))
+
+# CellChat likes to have this metadata
+seurat_data$samples <- factor(paste0(seurat_data$location, "_", seurat_data$date, "_", seurat_data$condition))
+
+cellchat <- createCellChat(object = seurat_data, group.by = "celltypeloc", assay = "SCT")
+
+cellchat@DB <- CellChatDB.mouse # use CellChatDB.human if running on human data
+
+# subset the expression data of signaling genes for saving computation cost
+cellchat <- subsetData(cellchat) # This step is necessary even if using the whole database
+future::plan("multisession", workers = 4) # do parallel
+cellchat <- identifyOverExpressedGenes(cellchat)
+cellchat <- identifyOverExpressedInteractions(cellchat)
+
+#cellchat <- computeCommunProb(cellchat, type = "triMean") 
+cellchat <- computeCommunProb(cellchat, type = "truncatedMean", trim = 0.1) 
+
+# Users can filter out the cell-cell communication if there are only few cells in certain cell groups. 
+# By default, the minimum number of cells required in each cell group for cell-cell communication is 10.
+cellchat <- filterCommunication(cellchat, min.cells = 10)
+
+# Infer the cell-cell communication at a signaling pathway level
+cellchat <- computeCommunProbPathway(cellchat)
+
+cellchat <- aggregateNet(cellchat)
+
+cellchat <- netAnalysis_computeCentrality(cellchat, slot.name = "netP") # the slot 'netP' means the inferred intercellular communication network of signaling pathways
+
+cellchat %>% readr::write_rds(paste0(data_dir, "cellchat/cellchat_", dataset, "_", grouping, ".rds"))
+#######################################################################################################################################
 

@@ -21,17 +21,42 @@ marker_genes_L2 <- c("Epcam", "Ptprc",
                      "Pdgfra",  # Fibroblasts
                      "Vwf")     # Endothelial
 
+# marker_genes_tg <- 
+#   c(#"Itgam", # Cd11b - Myeloid marker (mouse)
+#     #"Adgre1", # F4/80, 
+#     "Pax5",  # B 
+#     "Ighd", "Cd27", # Naive (mouse) B cell markers (IgD+, CD27-)
+#     "Cd3d", # T
+#     "Klrb1c", "Prf1", "Klrk1", "Gzma", "Gzmb",  # NK 
+#     #"Itga2", "Ncam1",  #NK-T
+#     "Cd83",  # DCs
+#     "Cd14", "Cd68",  # Macs - note that Cd16 never comes up 
+#     #"Itgax", # DCs
+#     "Ly6c1", 
+#     #"Cd74", # MHC-II mouse marker (used by Renthal 2022 to identify immune cells in TG)
+#     "Ptgs2", "Irf5", "Nos2",  # Mouse M1 Mac Markers 
+#     # "Stat1", "Retnla",  # Mouse M1 Mac Markers (less helpful)
+#     #"Il12a", "Il23a", "Cd163",  # M1 vs M2 (M1: IL-12 and IL23 high with CD163 neg and M2 the opposite)
+#     "Cd163",  # M2
+#     #"Arg1", # M2a
+#     "Socs3", "Cd86", # M2b
+#     "Ccr2", "Slamf6",   #M2c
+#     # "Tlr1", "Tlr8", "Scarb1", #M2c (less helpful)
+#     "Vegfa",    # M2d, 
+#     "Cx3cr1"  # Tissue-res Mac
+#   )
+
 marker_genes_tg <- 
-  c(#"Itgam", # Cd11b - Myeloid marker (mouse)
-    #"Adgre1", # F4/80, 
-    "Pax5",  # B 
-    "Ighd", "Cd27", # Naive (mouse) B cell markers (IgD+, CD27-)
-    "Cd3d", # T
+  c("Ptprc", 
+    "Pax5", "Cd19", "Ighg1", "Ighm", "Ighd", "Cd27", # B cells - Naive (mouse) B cell markers (IgD+, CD27-)
+    "Cd3d", "Cd3e", "Cd3g", # T
     "Klrb1c", "Prf1", "Klrk1", "Gzma", "Gzmb",  # NK 
-    #"Itga2", "Ncam1",  #NK-T
-    "Cd83",  # DCs
-    "Cd14", "Cd68",  # Macs - note that Cd16 never comes up 
-    #"Itgax", # DCs
+    "Itga2", "Ncam1",  #NK-T
+    "Itgam", "Adgre1", "Itgax",
+    "Itgam", # Cd11b - Myeloid marker (mouse)
+    "Adgre1", "Cd83", # F4/80, 
+    "Itgax", # DCs
+    "Cd14", "Cd68", "Fcgr1",  # Macs - note that Cd16 never comes up 
     "Ly6c1", 
     #"Cd74", # MHC-II mouse marker (used by Renthal 2022 to identify immune cells in TG)
     "Ptgs2", "Irf5", "Nos2",  # Mouse M1 Mac Markers 

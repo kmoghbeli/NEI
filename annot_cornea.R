@@ -14,7 +14,7 @@ kaveh_colors3 <- c("#ff0000", "#f5f5f5","#0000ff")
 
 
 config_dir <- "./config/"
-data_dir <- "./data/"
+data_dir <- "../data_objects/"
 model_dir <- "./models/"
 results_dir <- "./results/"
 figures_dir <- "./figures/"
@@ -33,7 +33,7 @@ source("OmicsToolbox/marker_genes.R")
 ##########################################
 
 # Read in Seurat Objects
-seurat_obj <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "sept_cornea.h5Seurat"))
+seurat_obj <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/sept_cornea_annot.h5Seurat"))
 
 ## Factorizations
 seurat_obj$condition <- factor(seurat_obj$condition, levels = c("control", "scratch", "kos", "re"))
@@ -54,7 +54,7 @@ VlnPlot(seurat_obj, assay = "SCT",
   ggtitle("Sept Cornea (SCT)")
 
 sept_cornea_L2_avgs <- AverageExpression(seurat_obj, assays = "SCT", layer = "scale.data", group.by = "seurat_clusters",
-                                         features = c("Ptprc", "Epcam", "Itgam", "Cd74", "Cd68", "Cd3g", "Pax5", "Klrb1c", "Klrk1"))[[1]] %>% 
+                                         features = c("Ptprc", "Epcam", "Itgam", "Cd74", "Cd68", "Cd3g", "Pax5", "Klrb1c", "Vwf", "Ncam1", "Pdgfra"))[[1]] %>% 
   as.matrix() %>% t() %>% 
   as_tibble(rownames = "cluster") %>% 
   mutate(designation = case_when(Epcam > 0.4 ~ "Epi", 
@@ -63,12 +63,14 @@ sept_cornea_L2_avgs <- AverageExpression(seurat_obj, assays = "SCT", layer = "sc
                                  Klrb1c > 0 ~ "NK", 
                                  Pax5 > 1 ~ "B", 
                                  (Ptprc > 0) | (Cd74> 0) ~ "other_imm",
+                                 Vwf > 1 ~ "Endo", 
+                                 Ncam1 > 1 & Pdgfra > 1 ~ "Ncam1+Pdgfra+",
                                  .default = "other"))
 
 print(sept_cornea_L2_avgs, n = Inf)
 
 seurat_obj$cell_L2 <- factor(sept_cornea_L2_avgs$designation[as.numeric(seurat_obj$seurat_clusters)], 
-                              levels = c("Mye", "NK", "B", "T", "other_imm", "Epi", "other"))
+                              levels = c("Mye", "NK", "B", "T", "other_imm", "Epi", "Endo", "Ncam1+Pdgfra+", "other"))
 
 seurat_obj$cell_L1 <- 
   factor(case_when(
@@ -81,7 +83,7 @@ seurat_obj$cell_L1 <-
     .default = "other"
   ), levels = c("immune", "epithelial", "other"))
 
-## Cell L3 annotation
+## Cell L4 annotation
 sept_cornea_cell_L4_mappings <- 
   seurat_obj@meta.data %>% 
   select(cell_L2, seurat_clusters) %>% 
@@ -104,10 +106,17 @@ seurat_obj$cell_L4 <- factor(seurat_obj$cell_L4,
 ##########################################
 
 ## Write the new annotated version and delete our unannotated version
-seurat_obj %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, "sept_cornea_annot.h5Seurat"), overwrite = TRUE)
+seurat_obj %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, "seurat/sept_cornea_annot.h5Seurat"), overwrite = TRUE)
 
 file.remove(paste0(data_dir, "sept_cornea.h5Seurat"))  # Delete the old file
 
 
 
 
+####
+VlnPlot(seurat_obj, assay = "SCT", 
+        features = marker_genes_L2, 
+        group.by = "cell_L4",
+        #cols = scCustomize::DiscretePalette_scCustomize(length(marker_genes_L2), palette = "glasbey", shuffle = FALSE),
+        stack = TRUE, flip = TRUE) + NoLegend() + 
+  ggtitle("Sept Cornea (SCT)")

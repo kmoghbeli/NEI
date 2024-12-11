@@ -8,8 +8,7 @@ library(harmony)
 library(leiden)
 library(scRepertoire)
 conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
-
-options(Seurat.object.assay.version = "v3")
+options(future.globals.maxSize = 1000 * 1024^2)   ## 1GB
 
 #reticulate::py_install("leidenalg")
 #leidenalg <- reticulate::import("leidenalg")
@@ -41,6 +40,13 @@ seurat_norm_integrate <- function(config, seurat_verbose = FALSE) {
     seurat_obj <- NULL
     
     sample_counts <- Read10X_h5(paste0(sample$path, "/filtered_feature_bc_matrix.h5"))
+    
+    # Fix a stupid mistake I made in not naming these as "HSV_" 
+    genes <- rownames(sample_counts)
+    genes <- sub("RE_|KOS_", "HSV_", genes)
+    rownames(sample_counts) <- genes
+    
+    #rownames(sample_counts)[str_starts(rownames(sample_counts), "HSV")]
     
     if (is.null(sample$htos)) {
       ### No HTOs
@@ -223,5 +229,5 @@ seurat_norm_integrate <- function(config, seurat_verbose = FALSE) {
   
   #merged_seurat[["RNA"]] <- as(object = merged_seurat[["RNA"]], Class = "Assay")
   
-  merged_seurat %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, config$filename, ".h5Seurat"), overwrite = TRUE, verbose = seurat_verbose)
+  merged_seurat %>% SeuratDisk::SaveH5Seurat(paste0(config$file_dir, config$filename, ".h5Seurat"), overwrite = TRUE, verbose = seurat_verbose)
 }
