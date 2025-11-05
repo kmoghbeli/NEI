@@ -17,9 +17,7 @@ kaveh_colors3 <- c("#ff0000", "#f5f5f5","#0000ff")
 
 
 config_dir <- "./config/"
-data_dir <- "./data/"
-model_dir <- "./models/"
-results_dir <- "./results/"
+data_dir <- "../data_objects/"
 figures_dir <- "./figures/"
 
 # Parallell Processing
@@ -33,11 +31,12 @@ if(parallel::detectCores(logical=FALSE) > 3) {
 
 ##########################################
 
-neuron_counts <- readr::read_csv("../../../_DATASETS/NeuroImmune/neuron_counts_all_kallisto_tximport_lengthscaledtpm.csv",
-                                 show_col_types = FALSE) %>%
-  column_to_rownames(var = "gene")
+# counts_filename <- "../../../_DATASETS/NeuroImmune/neuron_counts_all_kallisto_tximport_lengthscaledtpm.csv"
+counts_filename <- "../../../_DATASETS/NeuroImmune/neuron_counts_all_with_viral_kallisto_tximport_lengthscaledtpm.csv"
 
-colnames(neuron_counts) <- sub("neuron_", "", colnames(neuron_counts))
+neuron_counts <- 
+  readr::read_csv(counts_filename, show_col_types = FALSE) %>%
+  column_to_rownames(var = "gene")
 
 neuron_counts <- neuron_counts[, !is.na(colSums(neuron_counts)) & colSums(neuron_counts) > 0] %>%
   as.matrix() %>%
@@ -46,11 +45,31 @@ neuron_counts <- neuron_counts[, !is.na(colSums(neuron_counts)) & colSums(neuron
 neuron_metadata <- readr::read_csv("../../../_DATASETS/NeuroImmune/neuron_metadata_with_filenames.csv",
                                    show_col_types = FALSE) %>%
   select(-filename) %>% 
+  mutate(cell = paste0("neuron_", cell)) %>%
+  filter(cell %in% colnames(neuron_counts)) %>%
   column_to_rownames(var = "cell")
+
+# Sanity Check
+all(sort(rownames(neuron_metadata)) == sort(colnames(neuron_counts)))
 
 neuron_obj <- CreateSeuratObject(neuron_counts,
                                  project = "NeuroImmune", 
                                  meta.data = neuron_metadata)
+
+# Check to make sure that none of the control or scratch cells have viral expression
+# and set the "viral_infection" metadata column
+raw_counts <- neuron_obj@assays$RNA@counts
+viral_genes <- grep("HSV", rownames(raw_counts), value = TRUE)
+viral_counts <- raw_counts[viral_genes, ]
+viral_cells <- which(Matrix::rowSums(raw_counts[viral_genes, ]) > 0)
+viral_expression_per_cell <- Matrix::colSums(raw_counts[viral_genes, ])
+neuron_obj$viral_infection <- factor(
+  ifelse(viral_expression_per_cell > 0, "infected", "non-infected"),
+  levels = c("non-infected", "infected"))
+
+# "control" and "scratch" should not have any viral infection
+table(neuron_obj$condition, neuron_obj$viral_infection)
+
 
 ## Update/Set some Metadata
 neuron_obj$condition <- factor(neuron_obj$condition, levels = c("control", "scratch", "kos", "re"))
@@ -86,12 +105,15 @@ neuron_obj <- FindClusters(neuron_obj, resolution = 1.0, method = "igraph", algo
 neuron_obj <- PrepSCTFindMarkers(neuron_obj)
 
 # ## quick plots to show that batch correction worked
-# p1 <- DimPlot(neuron_obj, group.by = "seurat_clusters") + theme(legend.position = "bottom")
-# p2 <- DimPlot(neuron_obj, group.by = "condition") + theme(legend.position = "bottom")
-# p3 <- DimPlot(neuron_obj, group.by = "batch_folder") + theme(legend.position = "bottom") + guides(colour = guide_legend(ncol = 2))
-# p1 + p2 + p3
+p1 <- DimPlot(neuron_obj, group.by = "seurat_clusters") + theme(legend.position = "bottom")
+p2 <- DimPlot(neuron_obj, group.by = "condition") + theme(legend.position = "bottom")
+p3 <- DimPlot(neuron_obj, group.by = "batch_folder") + theme(legend.position = "bottom") + guides(colour = guide_legend(ncol = 2))
+p1 + p2 + p3
 
-neuron_obj %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, "seurat/neurons_all_conditions.h5Seurat"), overwrite = TRUE)
+if (str_detect(counts_filename, "viral")) {
+  seurat_filename <- paste0(data_dir, "seurat/neurons_all_conditions.with_viral.h5Seurat")
+} else {
+  seurat_filename <- paste0(data_dir, "seurat/neurons_all_conditions.h5Seurat")
+}
 
-########################################################################################################################
-
+neuron_obj %>% SeuratDisk::SaveH5Seurat(seurat_filename, overwrite = TRUE)

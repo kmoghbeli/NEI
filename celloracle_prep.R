@@ -100,7 +100,7 @@ seurat_data.final_subset[["SCT"]] <- AddMetaData(seurat_data.final_subset[["SCT"
 ##  - store the "data" slot of "SCT" into "scale.data"
 ##  - store the raw counts (from "RNA" assay "counts") into "SCT" "data" so that Convert will store it into "raw.X"
 seurat_data.final_subset[["SCT"]]$scale.data <- seurat_data.final_subset[["SCT"]]$data %>% as.matrix()
-seurat_data.final_subset[["SCT"]]$counts <- seurat_data.final_subset[["RNA"]]$counts
+seurat_data.final_subset[["SCT"]]$data <- seurat_data.final_subset[["RNA"]]$counts
 
 seurat_data.final_subset %>% SeuratDisk::SaveH5Seurat(paste0(data_dir, dataset, "_temp_for_celloracle.h5Seurat"), overwrite = TRUE)
 SeuratDisk::Convert(source = paste0(data_dir, dataset, "_temp_for_celloracle.h5Seurat"), 

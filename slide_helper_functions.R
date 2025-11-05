@@ -33,44 +33,46 @@ subsetNIData <- function(seurat_obj,
                          celltype_metadata_val, 
                          conditions, 
                          exclude_mito_ribo_genes = TRUE, 
-                         genes_to_keep = c()) {
+                         genes_to_keep = NULL) {
   
   max_cells_per_condition <- 10000000
   max_features <- 5000
   
-  print(paste0("subsetNIData: Initial dataset - ", ncol(seurat_obj), " cells and ", nrow(seurat_obj), " features"))
+  message("subsetNIData: Initial dataset - ", ncol(seurat_obj), " cells and ", nrow(seurat_obj), " features")
+  
+  filtered_seurat_obj <- seurat_obj
   
   ## 1) Remove mitochondrial and ribosomal genes
   if (TRUE == exclude_mito_ribo_genes) {
-    genes_to_keep <- which(!grepl("^MT-|^RPS|^RPL|^mRP|^ATP", 
-                                  Features(seurat_obj), 
-                                  ignore.case = TRUE))
+    non_mt_ribo_genes <- which(!grepl("^MT-|^RPS|^RPL|^mRP|^ATP", 
+                                      Features(filtered_seurat_obj), 
+                                      ignore.case = TRUE))
     
-    seurat_obj <- subset(seurat_obj, features = Features(seurat_obj)[genes_to_keep])
+    filtered_seurat_obj <- subset(filtered_seurat_obj, features = Features(filtered_seurat_obj)[non_mt_ribo_genes])
   }  
   
-  print(paste0("subsetNIData: Removed mito/ribo genes - ", ncol(seurat_obj), " cells and ", nrow(seurat_obj), " features"))
+  message("subsetNIData: Removed mito/ribo genes - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features")
   
   ## 2) First Zero Filter
-  data <- GetAssayData(seurat_obj, layer = "data", assay="SCT")
+  data <- GetAssayData(filtered_seurat_obj, layer = "data", assay="SCT")
   
   filtered_data <- sparsityFiltering(data, sample_thresh = 1000, feature_thresh = 700)
   
-  filtered_seurat_obj <- subset(seurat_obj, cells = colnames(filtered_data), features = rownames(filtered_data))
+  filtered_seurat_obj <- subset(filtered_seurat_obj, cells = colnames(filtered_data), features = rownames(filtered_data))
   
-  print(paste0("subsetNIData: Sparsity filtered - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features"))
+  message("subsetNIData: Sparsity filtered - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features")
   
   ## 3) Subset just the cell types of interest
   Idents(filtered_seurat_obj) <- filtered_seurat_obj[[celltype_metadata_key]] %>% rownames_to_column() %>% deframe()
   filtered_seurat_obj <- subset(filtered_seurat_obj, idents = celltype_metadata_val)
   
-  print(paste0("subsetNIData: Subset to cell types of interest (", celltype_metadata_key , "=", paste(unlist(celltype_metadata_val), collapse = "+") , ") - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features"))
+  message("subsetNIData: Subset to cell types of interest (", celltype_metadata_key , "=", paste(unlist(celltype_metadata_val), collapse = "+") , ") - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features")
   
   ## 4) Then subset just those belonging to the conditions of interest
   Idents(filtered_seurat_obj) <- filtered_seurat_obj$condition
   filtered_seurat_obj <- subset(filtered_seurat_obj, idents = conditions)
   
-  print(paste0("subsetNIData: Subset to conditions of interest (", paste(conditions, collapse = " vs ") , ") - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features"))
+  message("subsetNIData: Subset to conditions of interest (", paste(conditions, collapse = " vs ") , ") - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features")
   
   ## 5) If we have more than the number of desired features (i.e., genes) 
   ## then variance-based filter down to that number
@@ -88,7 +90,7 @@ subsetNIData <- function(seurat_obj,
     
     filtered_seurat_obj <- subset(filtered_seurat_obj, features = VariableFeatures(seurat_obj_copy))
     
-    print(paste0("subsetNIData: Variance filtered - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features"))
+    message("subsetNIData: Variance filtered - ", ncol(filtered_seurat_obj), " cells and ", nrow(filtered_seurat_obj), " features")
   }
   
   ## 6) Subset the number of samples if needed and evenly distribute them 
@@ -96,7 +98,7 @@ subsetNIData <- function(seurat_obj,
   celltype_and_conditions_table <- table(filtered_seurat_obj[[celltype_metadata_key]] %>% rownames_to_column() %>% deframe(), 
                                          filtered_seurat_obj$condition)
   
-  print(celltype_and_conditions_table)
+  #message(celltype_and_conditions_table)
   
   celltype_and_conditions_min <- min(celltype_and_conditions_table[celltype_and_conditions_table > 0])
   
@@ -112,21 +114,36 @@ subsetNIData <- function(seurat_obj,
     group_by(across(all_of(c("y", celltype_metadata_key)))) %>% 
     slice_sample(n = celltype_and_conditions_min)
   
-  print(table(data[[celltype_metadata_key]], data$y))
+  #message(table(data[[celltype_metadata_key]], data$y))
   
   data <- data %>% 
     ungroup() %>% 
     select(-any_of(celltype_metadata_key)) %>% 
     column_to_rownames("barcode")
   
-  print(paste0("subsetNIData: Downsampling/Balancing across conditions/celltypes - ", nrow(data), " cells and ", ncol(data) - 1, " features"))
+  message("subsetNIData: Downsampling/Balancing across conditions/celltypes - ", nrow(data), " cells and ", ncol(data) - 1, " features")
   
   ## 7) Now remove any features remaining with ZERO variance (SLIDE will break if it gets features with zero variance/StdDev)
   non_zero_variance_features <- data %>% select(-y) %>% as.matrix() %>% matrixStats::colVars() %>% tibble::enframe() %>% filter(value > 0) %>% pull(name)
   
   data <- data %>% select(y, all_of(non_zero_variance_features))
   
-  print(paste0("subsetNIData: Removing zero-variance features - ", nrow(data), " cells and ", ncol(data) - 1, " features"))
+  message("subsetNIData: Removing zero-variance features - ", nrow(data), " cells and ", ncol(data) - 1, " features")
+  
+  ## 8) Add back in any genes in the passed in "genes_to_keep" list that we may have removed in our filtering steps above
+  if (!is.null(genes_to_keep) && !is.na(genes_to_keep) && length(genes_to_keep) > 0) {
+    genes_to_keep <- setdiff(genes_to_keep, colnames(data))   # Only add the ones we don't already have
+    
+    counts_for_genes_to_keep <- 
+      GetAssayData(seurat_obj, layer = "data", assay="SCT")[genes_to_keep, rownames(data)] %>% 
+      as.matrix() %>% t() %>% as.data.frame() %>% rownames_to_column("barcode")
+    
+    data <- left_join(x = data %>% rownames_to_column("barcode"), 
+                      y = counts_for_genes_to_keep, 
+                      by = join_by("barcode" == "barcode")) %>% 
+      column_to_rownames("barcode")
+  }
+  
   
   return(data)
 }
@@ -173,29 +190,7 @@ prepSLIDE <- function(data,
   
   ## Write YAML file
   
-  yaml_path = paste0(yaml_args$out_path, "er.yaml")
+  yaml_path = paste0(yaml_args$out_path, "slide.yaml")
   
   yaml::write_yaml(yaml_args, yaml_path)
-  
-  # yaml_string <- paste0("x_path: ", yaml_args$x_path, "\n", 
-  #                       "y_path: ", yaml_args$y_path, "\n", 
-  #                       "out_path: ", yaml_args$out_path, "\n", 
-  #                       "y_factor: ", yaml_args$y_factor, "\n", 
-  #                       "y_levels: [", paste(yaml_args$y_levels, collapse = ', '), "]\n", 
-  #                       "eval_type: ", yaml_args$eval_type, "\n", 
-  #                       "rep_cv: ", yaml_args$rep_cv, "\n", 
-  #                       "alpha_level: ", yaml_args$alpha_level, "\n", 
-  #                       "thresh_fdr: ", yaml_args$thresh_fdr, "\n", 
-  #                       "std_cv: ", yaml_args$std_cv, "\n", 
-  #                       "std_y: ", yaml_args$std_y, "\n", 
-  #                       "k: ", yaml_args$k, "\n", 
-  #                       "nreps: ", yaml_args$nreps, "\n", 
-  #                       "permute: ", yaml_args$permute, "\n", 
-  #                       "benchmark: ", yaml_args$benchmark, "\n", 
-  #                       "delta: ", yaml_args$delta, "\n", 
-  #                       "lambda: ", yaml_args$lambda, "\n", 
-  #                       "spec: ", yaml_args$spec, "\n")
-  # readr::write_file(yaml_string, yaml_path)
-  
-  return(0)
 }

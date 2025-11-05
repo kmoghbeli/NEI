@@ -1,11 +1,11 @@
 ## Utility file to make GTF file from a Genbank record
 library(tidyverse)
 
-data_dir <- "../data_objects/"
+data_dir <- "../data_objects/viral_genomes/"
 
 virus <- "re"
 
-gtf <- readr::read_delim(paste0(data_dir, virus, ".gtf"), 
+gtf <- readr::read_delim(paste0(data_dir, virus, ".fixed2.gtf"), 
                          col_names = c("seqname", "source", "feature", "start", "end", "score", "strand", "frame", "attributes"), 
                          comment = "#")
 
@@ -26,15 +26,15 @@ gtf.fixed %>% readr::write_delim(paste0(data_dir, virus, ".fixed.gtf"), delim = 
   
 
 #------------------------------------------------------------------------------------------------------------------------------------------------
-### ANOTHER WAY TO DO IT BELOW
 ## Create GTF file to use with this tutorial: https://www.10xgenomics.com/support/software/cell-ranger/latest/tutorials/cr-tutorial-mr
 # KOS Genome: https://www.ncbi.nlm.nih.gov/nuccore/JQ673480
-# RE Genome: https://www.ncbi.nlm.nih.gov/nuccore/KF498959.1
+# RE Genome: https://www.ncbi.nlm.nih.gov/nuccore/ON960060.1
+# (OLD INCORRECT) RE Genome: https://www.ncbi.nlm.nih.gov/nuccore/KF498959.1
 
 library(genbankr)
 library(rentrez)
 
-gba <- GBAccession("KF498959.1")
+gba <- GBAccession("ON960060.1")
 gb <- readGenBank(gba, partial=TRUE)
 
 # echo -e 'GFP\tunknown\texon\t1\t922\t.\t+\t.\tgene_id "GFP"; transcript_id "GFP"; gene_name "GFP"; gene_biotype "protein_coding";' > GFP.gtf

@@ -41,7 +41,7 @@ source("OmicsToolbox/seurat_norm_integrate.R")
 sept_cornea <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/sept_cornea_viral.h5Seurat"))
 
 ## Factorizations
-sept_cornea$condidtion <- factor(sept_cornea$condition, levels = c("kos", "re"))
+sept_cornea$condition <- factor(sept_cornea$condition, levels = c("kos", "re"))
 sept_cornea$id <- factor(sept_cornea$id)
 sept_cornea$date <- factor(sept_cornea$date)
 sept_cornea$location <- factor(sept_cornea$location)

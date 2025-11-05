@@ -29,7 +29,8 @@ get_filename <- function(base_dir, dir, prefix, num) {
 
 ### FILENAME PREP - ONLY NEED TO DO THIS ONCE
 ## Read in Excel file with neuron naming info
-neuron_filenames <- readr::read_csv("data/neuron_metadata.csv") %>% 
+neuron_filenames <- 
+  readr::read_csv("../data_objects/neuron_metadata.csv") %>% 
   mutate(cell_tube_prefix = ifelse(is.na(cell_tube_prefix), "", cell_tube_prefix), 
          cell_tube_begin = as.numeric(str_extract(cell_tube_range, "^\\d+")), 
          cell_tube_end = as.numeric(str_extract(cell_tube_range, "\\d+$")), 
@@ -48,13 +49,29 @@ neuron_filenames %>%
 
 neuron_filenames %>% pull(filename) %>% paste(collapse = " ") %>% readr::write_file("neuron_filenames_only.txt")
 
-## Create Kallisto SLURM file
+## Create Kallisto SLURM file (NON-VIRAL)
 kallisto_template <- readr::read_lines("neuron_kallisto.slurm.template")
 kallisto_commands <- readr::read_csv("neuron_metadata_with_filenames.csv") %>% 
-  mutate(kallisto_command = paste0("kallisto quant -i /ix/djishnu/kaveh/kallisto.mouse_index.v10/transcriptome.idx -o kallisto_neuron_outs/", 
+  mutate(kallisto_command = paste0("kallisto quant -i /ix/djishnu/kaveh/kallisto_mouse_index_standard_nov2023/index.idx -o kallisto_neuron_outs/", 
                                    cell, " ", filename, " ", sub("_R1_", "_R2_", filename))) %>% 
   pull(kallisto_command)
 
 readr::write_lines(c(kallisto_template, "\n", kallisto_commands), "neuron_kallisto.slurm")
+
+## Create Kallisto SLURM file (VIRAL)
+kallisto_template <- readr::read_lines("neuron_kallisto.slurm.template")
+kallisto_commands <- readr::read_csv("neuron_metadata_with_filenames.csv") %>% 
+  mutate(kallisto_command = case_match(
+    condition, 
+    "kos" ~ paste0("kallisto quant -i /ix/djishnu/kaveh/kallisto_mouse_index_standard_nov2023/index_with_kos.idx -o kallisto_neuron_outs.with_viral/", 
+                   cell, " ", filename, " ", sub("_R1_", "_R2_", filename)),
+    "re" ~ paste0("kallisto quant -i /ix/djishnu/kaveh/kallisto_mouse_index_standard_nov2023/index_with_re.idx -o kallisto_neuron_outs.with_viral/", 
+                  cell, " ", filename, " ", sub("_R1_", "_R2_", filename)), 
+    .default = paste0("kallisto quant -i /ix/djishnu/kaveh/kallisto_mouse_index_standard_nov2023/index.idx -o kallisto_neuron_outs.with_viral/", 
+                      cell, " ", filename, " ", sub("_R1_", "_R2_", filename))
+  )) %>% 
+  pull(kallisto_command)
+
+readr::write_lines(c(kallisto_template, "\n", kallisto_commands), "neuron_kallisto_viral.slurm")
 
 

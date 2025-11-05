@@ -45,7 +45,7 @@ for (config in configs) {
 combined_tg <- SeuratDisk::LoadH5Seurat(paste0(data_dir, "seurat/combined_tg_viral.h5Seurat"))
 
 ## Factorizations
-combined_tg$condidtion <- factor(combined_tg$condition, levels = c("kos", "re"))
+combined_tg$condition <- factor(combined_tg$condition, levels = c("kos", "re"))
 combined_tg$id <- factor(combined_tg$id)
 combined_tg$date <- factor(combined_tg$date)
 combined_tg$location <- factor(combined_tg$location)

@@ -11,7 +11,7 @@ conflicted::conflict_prefer_all("dplyr", quiet = TRUE)
 kaveh_colors <- c("#40004b", "#c2a5cf", "#f5f5f5", "#80cdc1", "#018571")
 
 ## Covariance Graphs
-plot_lf_covar_graphs <- function(config_yaml) {
+plot_lf_covar_graphs <- function(config_yaml, num_features = 50) {
   for (result in config_yaml$er_results) {
     
     er_x <- readr::read_csv(paste0(result$path, "x.csv"), show_col_types = FALSE)
@@ -20,9 +20,11 @@ plot_lf_covar_graphs <- function(config_yaml) {
     
     for (lf in lfs) {
       
-      lf_features <- readr::read_table(paste0(result$path, "gene_list_Z", lf, ".txt"), show_col_types = FALSE) %>% 
+      lf_features <- readr::read_table(paste0(result$path, "feature_list_Z", lf, ".txt"), show_col_types = FALSE) %>% 
         mutate(names = ifelse(grepl("^X.+Rik$", names), sub("^X", "", names), names)) %>% 
-        mutate(names = gsub("\\.", "-", names))   # For some reason ER/SLIDE results swap out "-" for "." in our gene names
+        #mutate(names = gsub("\\.", "-", names)) %>%   # For some reason ER/SLIDE results swap out "-" for "." in our gene names
+        arrange(desc(abs(A_loading))) %>% 
+        slice_head(n = num_features)
       
       corr_matrix <- cor(er_x %>% select(all_of(lf_features %>% pull(names))))
       
@@ -123,7 +125,7 @@ plot_pathways_analysis <- function(config_yaml) {
     
     for (lf in lfs) {
       
-      lf_features <- readr::read_table(paste0(result$path, "gene_list_Z", lf, ".txt"), show_col_types = FALSE) %>% 
+      lf_features <- readr::read_table(paste0(result$path, "feature_list_Z", lf, ".txt"), show_col_types = FALSE) %>% 
         mutate(names = ifelse(grepl("^X.+Rik$", names), sub("^X", "", names), names)) %>% 
         mutate(names = gsub("\\.", "-", names))   # For some reason ER/SLIDE results swap out "-" for "." in our gene names
       
@@ -187,24 +189,25 @@ pathways_plot <- function(gprofiler_result, plot_title = "") {
 config <- yaml::yaml.load("
 er_results:
 
-  # - result:
-  #   path: 'slide_runs/combined_tg_Mac_KOSvRE_D0.01_L1_S0.5/'
-  #   lfs: '18, 27, 31, 107, 147, 157'
-  #   condition1: 'KOS'
-  #   condition2: 'RE'
-  #   title: 'Combined TG Macs'
-
   - result:
-    path: 'slide_runs/combined_tg_Mac_KOSvRE_D0.01_L0.5_S0.3/'
-    lfs: '87, 27, 139, 18, 147, 31, 107, 157'
+    path: 'slide_runs/combined_tg_viral_mye_kos_vs_re_spec0.3/0.01_0.1_out/'
+    lfs: '20, 25, 58'
     condition1: 'KOS'
     condition2: 'RE'
-    title: 'Combined TG Macs'
+    title: 'Combined TG Myeloid'
+    
+  - result:
+    path: 'slide_runs/combined_tg_viral_no_viral_genes_mye_kos_vs_re_spec0.3/0.01_0.1_out/'
+    lfs: '5, 21, 26, 59'
+    condition1: 'KOS'
+    condition2: 'RE'
+    title: 'Combined TG Myeloid'
+
 ")
 
 
-plot_lf_covar_graphs(config)
-plot_lf_scatterplots(config)
+plot_lf_covar_graphs(config, num_features = 50)
+#plot_lf_scatterplots(config)
 plot_pathways_analysis(config)
 
 ## Transcription Factor stuff
@@ -232,7 +235,7 @@ plot_pathways_analysis(config)
 #   
 #   lf_features <- 
 #     bind_rows(lf_features, 
-#               readr::read_table(paste0(base_slide_path, "gene_list_Z", lf, ".txt"), show_col_types = FALSE) %>% 
+#               readr::read_table(paste0(base_slide_path, "feature_list_Z", lf, ".txt"), show_col_types = FALSE) %>% 
 #                 mutate(names = ifelse(grepl("^X.+Rik$", names), sub("^X", "", names), names)) %>% 
 #                 mutate(names = gsub("\\.", "-", names)) %>%  # For some reason ER/SLIDE results swap out "-" for "." in our gene names 
 #                 mutate(lf_num = as.numeric(lf)) %>% 
