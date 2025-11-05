@@ -44,3 +44,10 @@ kallisto_neuron_outs
 neuron_kallisto.slurm
 transcripts_to_genes.txt
 table3_neuron_cluster_marker_genes.csv
+.lintr
+/.vscode/
+/.vscode/*
+*.Rproj
+neuron_filenames_for_GEO.txt
+Mouse_Neuronal_Death_Injury_Gene_Panel.csv
+
